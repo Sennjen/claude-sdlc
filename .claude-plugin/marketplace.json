@@ -1,0 +1,14 @@
+{
+  "name": "ai-sdlc",
+  "description": "AI-native SDLC workflow plugins for Claude Code.",
+  "owner": {
+    "name": "Eugen Dzubenko"
+  },
+  "plugins": [
+    {
+      "name": "sdlc",
+      "source": "./plugins/sdlc",
+      "description": "AI-native SDLC with hook-enforced approval gates."
+    }
+  ]
+}

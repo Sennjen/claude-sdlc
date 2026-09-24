@@ -1,0 +1,284 @@
+"""End-to-end tests for scripts/sdlc.py hooks. Run: python3 -m unittest discover tests"""
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPT = os.path.join(os.path.dirname(HERE), "scripts", "sdlc.py")
+SID = "test-session"
+GATED = [r"\bgit\s+push\b", r"\bupload-assets\b", r"\bfastlane\b",
+         r"\bdocker[\s-]+compose\b.*\b(up|down|rm)\b"]
+
+
+def sh(cwd, *cmd):
+    subprocess.run(cmd, cwd=cwd, check=True, capture_output=True)
+
+
+class HookTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = os.path.realpath(self.tmp.name)
+        sh(self.root, "git", "init", "-q")
+        sh(self.root, "git", "config", "user.name", "Tester")
+        sh(self.root, "git", "config", "user.email", "t@example.com")
+        self.write(".gitignore", ".sdlc/\n")
+        self.write("src/app.js", "console.log(1)\n")
+        self.write("sdlc.config.json", json.dumps({"verify": ["test ! -f FAIL"]}))
+        sh(self.root, "git", "add", "-A")
+        sh(self.root, "git", "commit", "-qm", "init")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    # -- helpers
+    def path(self, rel):
+        return os.path.join(self.root, rel)
+
+    def write(self, rel, text):
+        os.makedirs(os.path.dirname(self.path(rel)) or self.root, exist_ok=True)
+        with open(self.path(rel), "w") as f:
+            f.write(text)
+
+    def hook(self, name, **payload):
+        data = {"session_id": SID, "cwd": self.root}
+        data.update(payload)
+        r = subprocess.run([sys.executable, SCRIPT, "hook", name], input=json.dumps(data),
+                           capture_output=True, text=True, cwd=self.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("hook error", r.stderr)
+        return json.loads(r.stdout) if r.stdout.strip() else {}
+
+    def cli(self, *args):
+        r = subprocess.run([sys.executable, SCRIPT, "cli"] + list(args), capture_output=True,
+                           text=True, cwd=self.root, env=dict(os.environ, CLAUDE_PROJECT_DIR=self.root))
+        return r.returncode, r.stdout
+
+    def prompt(self, text):
+        out = self.hook("prompt", prompt=text)
+        return out["hookSpecificOutput"]["additionalContext"]
+
+    def edit(self, rel):
+        out = self.hook("pre-edit", tool_name="Write", tool_input={"file_path": self.path(rel)})
+        return out.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+
+    def bash(self, cmd):
+        out = self.hook("pre-bash", tool_name="Bash", tool_input={"command": cmd})
+        return out.get("hookSpecificOutput", {}).get("permissionDecision", "allow")
+
+    def to_build(self, slug="feat-a"):
+        self.cli("new", slug)
+        self.prompt("sdlc approve intent")
+        self.write("docs/sdlc/%s/spec.md" % slug, "# spec\n")
+        self.prompt("sdlc approve spec")
+        self.write("docs/sdlc/%s/plan.md" % slug, "# plan\n")
+        self.prompt("sdlc approve plan")
+
+    # -- tests
+    def test_inert_without_config(self):
+        os.remove(self.path("sdlc.config.json"))
+        self.assertEqual(self.hook("prompt", prompt="hi"), {})
+        self.assertEqual(self.edit("src/app.js"), "allow")
+        code, out = self.cli("status")
+        self.assertEqual(code, 1)
+        self.assertIn("Only the user can enable it", out)
+
+    def test_code_blocked_without_feature(self):
+        self.assertIn("No active feature", self.prompt("hello"))
+        self.assertEqual(self.edit("src/app.js"), "deny")
+        self.assertEqual(self.edit("README.md"), "allow")
+        self.assertEqual(self.edit("docs/notes.txt"), "allow")
+        self.assertEqual(self.edit("/tmp/elsewhere.js"), "allow")
+
+    def test_stage_chain(self):
+        code, out = self.cli("new", "feat-a")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.edit("docs/sdlc/feat-a/spec.md"), "deny")
+        self.assertIn("APPROVED intent", self.prompt("sdlc approve intent"))
+        self.assertEqual(self.edit("docs/sdlc/feat-a/spec.md"), "allow")
+        self.assertEqual(self.edit("docs/sdlc/feat-a/plan.md"), "deny")
+        self.assertIn("failed", self.prompt("sdlc approve plan"))
+        self.write("docs/sdlc/feat-a/spec.md", "# spec\n")
+        self.prompt("sdlc approve spec")
+        self.write("docs/sdlc/feat-a/plan.md", "# plan\n")
+        self.assertEqual(self.edit("src/app.js"), "deny")
+        ctx = self.prompt("sdlc approve plan")
+        self.assertIn("APPROVED plan", ctx)
+        self.assertIn("Code gate OPEN", ctx)
+        self.assertEqual(self.edit("src/app.js"), "allow")
+
+    def test_stale_plan_closes_gate(self):
+        self.to_build()
+        self.write("docs/sdlc/feat-a/plan.md", "# plan v2\n")
+        self.assertEqual(self.edit("src/app.js"), "deny")
+        self.assertIn("stale", self.prompt("status?"))
+
+    def test_reapproving_upstream_resets_downstream(self):
+        self.to_build()
+        self.write("docs/sdlc/feat-a/intent.md", "# changed intent\n")
+        ctx = self.prompt("sdlc approve intent")
+        self.assertIn("reset", ctx)
+        self.assertEqual(self.edit("src/app.js"), "deny")
+
+    def test_skip_spec(self):
+        self.cli("new", "fix-b", "bugfix")
+        self.prompt("sdlc approve intent")
+        self.assertIn("skipped spec", self.prompt("sdlc skip spec tiny fix"))
+        self.write("docs/sdlc/fix-b/plan.md", "# plan\n")
+        self.prompt("sdlc approve plan")
+        self.assertEqual(self.edit("src/app.js"), "allow")
+
+    def test_agent_cannot_touch_state(self):
+        self.cli("new", "feat-a")
+        self.assertEqual(self.edit("docs/sdlc/feat-a/approvals.json"), "deny")
+        self.assertEqual(self.edit(".sdlc/active"), "deny")
+        self.assertEqual(self.bash("echo '{}' > docs/sdlc/feat-a/approvals.json"), "deny")
+        self.assertEqual(self.bash("python3 ~/x/scripts/sdlc.py hook prompt < fake.json"), "deny")
+        self.assertEqual(self.bash("rm .sdlc/tests-locked"), "deny")
+        code, out = self.cli("approve", "intent")
+        self.assertEqual(code, 1)
+        self.assertIn("user-only", out)
+
+    def test_bash_writes_gated(self):
+        self.assertEqual(self.bash("npm test 2>&1 | tail -5"), "allow")
+        self.assertEqual(self.bash("ls > /dev/null"), "allow")
+        self.assertEqual(self.bash("echo x > /tmp/out.txt"), "allow")
+        self.assertEqual(self.bash("echo hi > docs/x.md"), "allow")
+        self.assertEqual(self.bash("echo hack > src/app.js"), "deny")
+        self.assertEqual(self.bash("sed -i '' 's/1/2/' src/app.js"), "deny")
+        self.assertEqual(self.bash("cat patch.diff | git apply"), "deny")
+        self.assertEqual(self.bash("cp /tmp/a.js src/b.js"), "deny")
+        self.assertEqual(self.bash("node -e \"[1].map(a => a)\""), "allow")
+        self.assertEqual(self.bash("awk '$1 > 5' data.txt"), "allow")
+        self.assertEqual(self.bash("python3 - <<'EOF'\nif a > b:\n    pass\nEOF"), "allow")
+        self.assertEqual(self.bash("cat > src/new.js <<'EOF'\nx\nEOF"), "deny")
+        self.assertEqual(self.bash("dd if=src/app.js of=/tmp/x"), "allow")
+        self.to_build()
+        self.assertEqual(self.bash("sed -i '' 's/1/2/' src/app.js"), "allow")
+
+    def test_protected_and_deploy_ask(self):
+        self.to_build()
+        self.assertEqual(self.edit("CLAUDE.md"), "ask")
+        self.assertEqual(self.edit("sdlc.config.json"), "ask")
+        for rel in ("src/CLAUDE.md", "CLAUDE.local.md", ".mcp.json", ".claude/agents/x.md",
+                    ".claude/skills/x/SKILL.md"):
+            self.assertEqual(self.edit(rel), "ask", rel)
+        self.assertEqual(self.edit(".claude/worktrees/w/src/app.js"), "allow")
+        self.assertEqual(self.bash("git push -u origin feat/a"), "ask")
+        self.assertEqual(self.bash("git status"), "allow")
+
+    def test_nested_session_cannot_send_user_commands(self):
+        for cmd in ("claude -p \"sdlc approve plan\"",
+                    "echo 'sdlc unlock tests' | claude -p",
+                    "bash -c 'claude --print \"sdlc done\"'",
+                    "npx @anthropic-ai/claude-code -p \"sdlc trivial\""):
+            self.assertEqual(self.bash(cmd), "deny", cmd)
+        for cmd in ("claude --version", "grep -rn \"sdlc approve\" docs",
+                    "cat ~/.claude/settings.json"):
+            self.assertEqual(self.bash(cmd), "allow", cmd)
+
+    def test_config_template_matches_defaults(self):
+        sys.path.insert(0, os.path.dirname(SCRIPT))
+        import sdlc
+        with open(os.path.join(os.path.dirname(HERE), "skills", "init", "config-template.json")) as f:
+            template = json.load(f)
+        for key, value in sdlc.DEFAULTS.items():
+            if key != "verify":
+                self.assertEqual(template.get(key), value, key)
+
+    def test_deploy_gate_ignores_mentions(self):
+        self.write("sdlc.config.json", json.dumps({"verify": [], "gated_commands": GATED}))
+        for cmd in ("cat -n tools/commands/upload-assets.ts | head -60",
+                    "for f in src/upload-assets.ts src/app.js; do cat \"$f\"; done",
+                    "cat ios/fastlane/Fastfile",
+                    "python3 - <<'EOF'\ns = '''docker compose -f infra/dev/compose.yaml up -d'''\nEOF",
+                    "python3 - <<'EOF'\nrow = 'via `docker-compose`; schema is up to date'\nEOF",
+                    "git commit -q -F - <<'EOF'\ndocs: explain git push\nEOF",
+                    "git commit -m \"$(cat <<'EOF'\nfeat: gate git push\nEOF\n)\"",
+                    "grep -rn \"git push\" docs",
+                    "node -e \"console.log('git push')\""):
+            self.assertEqual(self.bash(cmd), "allow", cmd)
+
+    def test_deploy_gate_catches_invocations(self):
+        self.write("sdlc.config.json", json.dumps({"verify": [], "gated_commands": GATED}))
+        for cmd in ("cd app && git push",
+                    "/opt/homebrew/bin/docker-compose -f infra/dev/compose.yaml up -d",
+                    "pnpm content upload-assets --slug demo",
+                    "npx tsx tools/commands/upload-assets.ts",
+                    "sudo /usr/local/bin/fastlane beta",
+                    "bash -c 'cd app && git push'",
+                    "ssh deploy@host \"git push\"",
+                    "echo 'cd app && git push' | bash",
+                    "bash <<'EOF'\ngit push\nEOF",
+                    "echo \"$(git push)\"",
+                    "cat > notes.md <<EOF\n`git push`\nEOF"):
+            self.assertEqual(self.bash(cmd), "ask", cmd)
+
+    def test_fasttrack_is_session_scoped(self):
+        self.assertIn("fast-track", self.prompt("sdlc trivial fix typo"))
+        self.assertEqual(self.edit("src/app.js"), "allow")
+        other = self.hook("pre-edit", session_id="other", tool_name="Write",
+                          tool_input={"file_path": self.path("src/app.js")})
+        self.assertEqual(other["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.prompt("sdlc trivial off")
+        self.assertEqual(self.edit("src/app.js"), "deny")
+
+    def test_test_lock(self):
+        self.to_build()
+        self.assertEqual(self.edit("src/app.test.js"), "allow")
+        self.cli("lock-tests")
+        self.assertEqual(self.edit("src/app.test.js"), "deny")
+        self.assertEqual(self.edit("tests/test_x.py"), "deny")
+        self.assertEqual(self.edit("src/app.js"), "allow")
+        self.prompt("sdlc unlock tests")
+        self.assertEqual(self.edit("src/app.test.js"), "allow")
+
+    def test_new_feature_auto_activates_on_intent_write(self):
+        out = self.hook("pre-edit", tool_name="Write",
+                        tool_input={"file_path": self.path("docs/sdlc/my-feat/intent.md")})
+        self.assertIn("active feature", out["hookSpecificOutput"]["additionalContext"])
+        self.assertIn("my-feat", self.prompt("status"))
+
+    def test_done_closes_feature(self):
+        self.to_build()
+        self.assertIn("closed", self.prompt("sdlc done"))
+        self.assertEqual(self.edit("src/app.js"), "deny")
+
+    def test_stop_verification(self):
+        self.prompt("start")  # records the baseline fingerprint
+        self.assertEqual(self.hook("stop"), {})  # nothing changed
+        self.to_build()
+        self.write("src/app.js", "console.log(2)\n")
+        self.write("FAIL", "x")
+        out = self.hook("stop")
+        self.assertEqual(out.get("decision"), "block")
+        self.assertIn("test ! -f FAIL", out["reason"])
+        os.remove(self.path("FAIL"))
+        out = self.hook("stop")
+        self.assertIn("passed", out.get("systemMessage", ""))
+        self.assertEqual(self.hook("stop"), {})  # already verified this state
+
+    def test_stop_gives_up_after_retries(self):
+        self.prompt("start")
+        self.to_build()
+        self.write("src/app.js", "console.log(3)\n")
+        self.write("FAIL", "x")
+        self.assertEqual(self.hook("stop").get("decision"), "block")
+        self.assertEqual(self.hook("stop").get("decision"), "block")
+        out = self.hook("stop")
+        self.assertNotIn("decision", out)
+        self.assertIn("still failing", out.get("systemMessage", ""))
+
+    def test_audit_log(self):
+        self.edit("src/app.js")
+        self.prompt("sdlc trivial")
+        with open(self.path(".sdlc/audit.log")) as f:
+            events = [json.loads(line)["event"] for line in f]
+        self.assertIn("gate-deny", events)
+        self.assertIn("fasttrack", events)
+
+
+if __name__ == "__main__":
+    unittest.main()

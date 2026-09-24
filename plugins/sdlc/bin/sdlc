@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Agent-safe SDLC CLI (on PATH while the plugin is enabled). Approvals are user-only.
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 "$DIR/../scripts/sdlc.py" cli "$@"
