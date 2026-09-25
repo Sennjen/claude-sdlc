@@ -24,7 +24,7 @@ that are enforced by hooks, not just requested in a prompt.
 | Approvals | `UserPromptSubmit` | Only a real user message `sdlc approve <stage>` records an approval (sha256 of the artifact, author, time) in `docs/sdlc/<feature>/approvals.json` |
 | Stage order | `PreToolUse` Edit/Write | `spec.md` needs an approved intent. `plan.md` needs an approved (or skipped) spec |
 | Code gate | `PreToolUse` Edit/Write/Bash | Code changes need an approved intent, spec and plan whose hashes still match. Editing an approved artifact reopens its approval |
-| Self-approval | `PreToolUse` | The agent cannot write `approvals.json` or `.sdlc/`, call the hook script directly, or send user commands (`sdlc approve ...`) through a nested `claude` session |
+| Self-approval | `PreToolUse` | The agent cannot write `approvals.json` or `.sdlc/`, call the hook script directly, or send user commands (`sdlc approve ...`) through a nested `claude` session. Reading them (`cat`, `grep`, `jq`, `git log`) is allowed |
 | Test lock | `PreToolUse` | After `sdlc lock-tests` (bug-fix flow) test files are read-only until the user unlocks them |
 | Protected files | `PreToolUse` | Files that steer the agent need user confirmation (`ask`): `CLAUDE.md` and `CLAUDE.local.md` in any directory, `.claude/` settings, hooks, agents, skills, commands, rules and output styles, `.mcp.json`, `REVIEW.md`, `sdlc.config.json` |
 | Deploy gate | `PreToolUse` Bash | `git push`, `gh pr merge`, publish and deploy commands need user confirmation (`ask`) |
@@ -92,6 +92,11 @@ docs/sdlc/<feature>/
   counts only when it is executed: the program itself, a script given to `bash`/`python3`/`tsx`,
   text handed to a shell (`bash -c`, `ssh host '...'`, `| sh`) or `$(...)`. Code run by other
   interpreters (`python3 -c`, `node -e`) and package scripts is not inspected.
+- A Bash call that mentions `approvals.json`, `.sdlc/` or `sdlc.py` passes only if every program
+  in it is a known reader (`cat`, `ls`, `grep`, `jq`, `sed` without `-i`/`w`/`e`, `find` without
+  `-exec`/`-delete`, `git status/log/show/diff/add/commit`...) and it redirects only to `/dev/*`
+  or tmp. Anything else is denied, even when it only reads (`python3 -c`, `find -exec`,
+  `sed -n '/Next/p'`).
 - Hooks fail open: if the hook script crashes, the tool call proceeds and the error goes to stderr.
 - The Stop gate runs the verify commands itself, so keep them fast.
 - Whether `ask` decisions still prompt in `bypassPermissions` mode depends on the Claude Code

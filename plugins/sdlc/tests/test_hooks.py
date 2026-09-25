@@ -141,6 +141,38 @@ class HookTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("user-only", out)
 
+    def test_state_reads_allowed(self):
+        self.cli("new", "feat-a")
+        for cmd in ("ls -la docs/sdlc/feat-a; cat docs/sdlc/feat-a/approvals.json 2>/dev/null | tail -80",
+                    "ls -la .sdlc && tail -5 .sdlc/audit.log",
+                    "for d in docs/sdlc/*/; do cat \"$d/approvals.json\" | head -40; done 2>/dev/null | head",
+                    "jq -r .intent.sha256 docs/sdlc/feat-a/approvals.json; shasum -a 256 docs/sdlc/feat-a/intent.md",
+                    "sed -n 1,20p docs/sdlc/feat-a/approvals.json && sed -n '/sha256/,$p' .sdlc/active",
+                    "S=~/x/scripts/sdlc.py; wc -l $S; grep -n \"def hook\" $S | head",
+                    "echo \"head: $(git rev-parse HEAD)\"; git log --oneline -- docs/sdlc/feat-a/approvals.json",
+                    "cat docs/sdlc/feat-a/approvals.json > /tmp/approvals.copy",
+                    "git add docs/sdlc/feat-a/approvals.json && git commit -q -F - <<'EOF'\n"
+                    "docs: record approvals.json; ignore .sdlc/\nEOF"):
+            self.assertEqual(self.bash(cmd), "allow", cmd)
+
+    def test_state_writes_denied_with_open_gate(self):
+        self.to_build()
+        for cmd in ("cd docs/sdlc/feat-a && echo '{}' > approvals.json",
+                    "echo '{}' > \"docs/sdlc/feat-a/approvals.json\"",
+                    "cat /tmp/forged | tee docs/sdlc/feat-a/approvals.json",
+                    "jq '.plan = {}' docs/sdlc/feat-a/approvals.json > /tmp/a && mv /tmp/a docs/sdlc/feat-a/approvals.json",
+                    "python3 -c \"import json; json.dump({}, open('docs/sdlc/feat-a/approvals.json', 'w'))\"",
+                    "python3 - <<'EOF'\nopen('docs/sdlc/feat-a/approvals.json', 'w').write('{}')\nEOF",
+                    "sed -n 'w docs/sdlc/feat-a/approvals.json' /tmp/forged",
+                    "sed -ni 's/a/b/' docs/sdlc/feat-a/approvals.json",
+                    "git checkout -- docs/sdlc/feat-a/approvals.json",
+                    "find .sdlc -name tests-locked -delete",
+                    "ls .sdlc\nrm .sdlc/tests-locked",
+                    "echo \"$(rm .sdlc/tests-locked)\"",
+                    "cat .sdlc/active > /tmp/../..$HOME/.sdlc/active",
+                    "cat fake.json | ~/x/scripts/sdlc.py hook prompt"):
+            self.assertEqual(self.bash(cmd), "deny", cmd)
+
     def test_bash_writes_gated(self):
         self.assertEqual(self.bash("npm test 2>&1 | tail -5"), "allow")
         self.assertEqual(self.bash("ls > /dev/null"), "allow")

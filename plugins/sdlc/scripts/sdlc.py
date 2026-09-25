@@ -519,6 +519,113 @@ def gated_pattern(cmd, patterns):
     return scan(cmd, 0) if patterns else None
 
 
+STATE_REF = re.compile(r"approvals\.json|(^|[\s/'\"=])\.sdlc(/|\b)|sdlc\.py")
+READERS = frozenset(("cat", "head", "tail", "ls", "wc", "grep", "egrep", "fgrep", "jq", "diff", "cmp",
+                     "stat", "shasum", "sha256sum", "md5", "md5sum", "cksum", "cut", "tr", "nl", "echo",
+                     "printf", "read", "pwd", "cd", "basename", "dirname", "realpath", "readlink", "test",
+                     "[", "true", "false", "sdlc"))
+# `add` and `commit` record files as they are: that is how approvals.json gets committed.
+GIT_READERS = frozenset(("status", "log", "show", "diff", "rev-parse", "ls-files", "ls-tree", "ls-remote",
+                         "cat-file", "blame", "grep", "describe", "shortlog", "add", "commit"))
+FIND_ACTIONS = ("-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls")
+KEYWORDS = frozenset(("if", "then", "else", "elif", "fi", "while", "until", "do", "done", "!", "{", "}",
+                      "time"))
+OPERATORS = "();<>|&\n"
+EXPANSION = re.compile(r"\$\(([^()]*)\)|`([^`]*)`")
+
+
+def git_reads(args):
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        if args[i] == "-c" or args[i].startswith("--config-env"):
+            return False
+        i += 2 if args[i] == "-C" else 1
+    return (i < len(args) and args[i] in GIT_READERS and not any(
+        a.startswith(("--output", "-O", "--open-files-in-pager", "--upload-pack", "--exec")) for a in args))
+
+
+def sed_reads(args):
+    """sed without in-place editing, script files or the w/W/e commands that write or run."""
+    scripts, expect = [], False
+    for a in args:
+        if expect:
+            scripts.append(a)
+            expect = False
+        elif a.startswith("--"):
+            if a.startswith(("--in-place", "--file")):
+                return False
+            if a.startswith("--expression"):
+                scripts += a.split("=", 1)[1:]
+                expect = "=" not in a
+        elif a.startswith("-") and len(a) > 1:
+            flags = a[1:]
+            expect = flags.endswith("e")
+            if set(flags.rstrip("e")) - set("nErsuz") or flags.count("e") > 1:
+                return False
+        elif not scripts:
+            scripts.append(a)
+    return bool(scripts) and not any(re.search(r"[wWe]", s) for s in scripts)
+
+
+def segment_reads(words):
+    while words and (words[0] in KEYWORDS or re.match(r"^\w+=", words[0])):
+        words = words[1:]
+    if not words or words[0] == "for":  # a loop header runs nothing but its expansions
+        return True
+    name, args = os.path.basename(words[0]), words[1:]
+    if name == "git":
+        return git_reads(args)
+    if name == "sed":
+        return sed_reads(args)
+    if name == "find":
+        return not any(a in FIND_ACTIONS for a in args)
+    return name in READERS
+
+
+def expansions_read(word):
+    while True:
+        m = EXPANSION.search(word)
+        if not m:
+            return "$(" not in word and "`" not in word
+        if not reads_only(m.group(1) if m.group(1) is not None else m.group(2)):
+            return False
+        word = word[:m.start()] + word[m.end():]
+
+
+def reads_only(cmd):
+    """True when every program in cmd only reads (READERS, git log/show/add/commit..., find
+    without actions, sed without -i/w/e), $(...) included, and redirects go only to /dev/* or tmp.
+    Quoted heredoc bodies are data; an unquoted one expands, so its lines count as commands."""
+    text = HEREDOC.sub(lambda m: "<<" + m.group(3) if m.group(1) else m.group(0), cmd)
+    lex = shlex.shlex(text, posix=True, punctuation_chars=OPERATORS)
+    lex.whitespace, lex.whitespace_split, lex.commenters = " \t\r", True, ""
+    try:
+        tokens = list(lex)
+    except ValueError:
+        return False
+    segments, words, redirect = [], [], None
+    for tok in tokens:
+        if tok and all(c in OPERATORS for c in tok):
+            is_redirect = tok == ">|" or not any(c in "();|\n" for c in tok) and any(c in "<>" for c in tok)
+            redirect = tok if is_redirect else None
+            if is_redirect and words and words[-1].isdigit():
+                words.pop()  # the fd number of `2>/dev/null`, not an argument
+            elif not is_redirect:
+                segments.append(words)
+                words = []
+            continue
+        if not expansions_read(tok):
+            return False
+        if redirect is None:
+            words.append(tok)
+        elif ">" in redirect and not (tok.isdigit() or tok in SAFE_SINKS
+                                      or os.path.normpath(tok).startswith(TMP_PREFIXES)):
+            return False
+        redirect = None
+    segments.append(words)
+    return all(segment_reads(w) for w in segments)
+
+
 # -------------------------------------------------------------------- user commands
 
 USER_CMD = re.compile(r"^\s*sdlc\s+([a-z-]+)(?:\s+(.*))?$", re.I)
@@ -732,10 +839,11 @@ def hook_pre_edit(data, p):
 def hook_pre_bash(data, p):
     cmd = (data.get("tool_input") or {}).get("command") or ""
     sid = data.get("session_id")
-    if re.search(r"approvals\.json|(^|[\s/'\"=])\.sdlc(/|\b)|sdlc\.py", cmd):
+    if STATE_REF.search(cmd) and not reads_only(cmd):
         p.audit("gate-deny", tool="Bash", command=cmd[:300], reason="sdlc state")
-        pre_decision("deny", "SDLC state (.sdlc/, approvals.json) is managed by hooks. Use the `sdlc` "
-                             "CLI (status, new, lock-tests) or ask the user.")
+        pre_decision("deny", "SDLC state (.sdlc/, approvals.json) is managed by hooks: shell commands "
+                             "may only read it (cat, grep, jq, sed -n, git log/show) and must not run "
+                             "sdlc.py. Use the `sdlc` CLI (status, new, lock-tests) or ask the user.")
     if NESTED_USER_CMD.search(cmd) and gated_pattern(cmd, CLAUDE_CLI):
         p.audit("gate-deny", tool="Bash", command=cmd[:300], reason="nested user command")
         pre_decision("deny", "User-only `sdlc` commands count only when the user types them in this "
