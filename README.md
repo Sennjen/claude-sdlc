@@ -237,8 +237,10 @@ docs/sdlc/<feature>/
   *Files affected* table (or a list in that section). A plan that names files another way gets
   no note.
 - The Stop gate runs the verify commands itself, so keep them fast.
-- Whether `ask` decisions still prompt in `bypassPermissions` mode depends on the Claude Code
-  version. Set `"gated_command_decision": "deny"` if deploys must be done by hand.
+- On Claude Code 2.1.291 a hook's `ask` holds in `bypassPermissions` mode too:
+  `claude -p --dangerously-skip-permissions` denies the gated call, so an interactive session
+  should show the prompt. Older versions may not; set `"gated_command_decision": "deny"` if
+  deploys must be done by hand.
 
 ## Tests
 
@@ -257,11 +259,13 @@ cd plugins/sdlc && npx -p typescript tsc -p .
 ```
 
 The eval suite in `plugins/sdlc/evals/` checks the agent's behaviour, not the hooks: a feature
-request starts with `intent.md`, an approved intent gets a plan before code, a bug fix locks
-the tests before the fix, a typo asks for `sdlc trivial`, a question starts nothing, and the
-review runs the `sdlc-reviewer` subagent. Each case runs three times with the plugin and three
-times without it, so `Δ` shows what the plugin adds. It makes real model calls (roughly 36
-agent runs), so run it from a terminal where `claude` is logged in:
+request starts with `intent.md`, an approved intent gets a spec that flags conflicting
+constraints, a skipped spec gets a plan before code, a bug fix locks the tests before the fix,
+work outside the approved plan stays out of the change, a typo asks for `sdlc trivial`, a
+question starts nothing, the review runs the `sdlc-reviewer` subagent, and a push to `main`
+waits for the user. Each case runs three times with the plugin and three times without it, so
+`Δ` shows what the plugin adds. It makes real model calls (roughly 54 agent runs), so run it
+from a terminal where `claude` is logged in:
 
 ```bash
 cd plugins/sdlc && claude plugin eval . --scaffold --allow-tools Bash Write Edit
