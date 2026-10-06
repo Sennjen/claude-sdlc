@@ -57,7 +57,7 @@ moves it on:
 | When | Action |
 |------|--------|
 | No active feature | `Start feature` (runs `/sdlc:intent`) and `Fast-track` (`sdlc trivial`) |
-| The stage's artifact is missing | `Write intent`, `Write spec` (runs the stage skill), `Write plan` (runs `/sdlc:plan` in plan mode) |
+| The stage's artifact is missing | `Write intent`, `Write spec`, `Write plan` (runs the stage skill) |
 | The artifact is a draft or changed | `Approve <stage>` / `Re-approve <stage>`, one click |
 | Build | `Start building` / `Continue building` (runs `/sdlc:build`), with `n/N steps` |
 | Every plan step is done, no current review | `Review` (runs `/sdlc:review`); `Review again` after `CHANGES REQUIRED` |
@@ -100,11 +100,16 @@ new PR.
 ## Plan mode
 
 The playbook drafts the plan in Claude Code plan mode, where Claude reads the code but cannot
-change it. `Write plan` in the bar runs `/plan` with the `sdlc:plan` task; you can also press
-`Shift+Tab` before asking for the plan. Claude interviews you and presents the plan in the
-template's sections. Accepting it in the plan-mode dialog only ends plan mode: Claude then writes
-it to `plan.md`, and the code gate opens when you approve that file (`Approve plan` or
-`sdlc approve plan`). Outside plan mode the skill writes `plan.md` directly, as before.
+change it. The bar does not switch to plan mode: `Write plan` runs `/sdlc:plan` in the current
+mode, and Claude writes `plan.md` directly. The code gate already keeps the code untouched until
+you approve the plan. Plan mode replaces the session's permission mode while it lasts. In a
+`bypassPermissions` session, every Bash command of Claude and its subagents then asks for
+permission.
+
+To draft in plan mode anyway, press `Shift+Tab` before you ask for the plan. Claude interviews
+you and presents the plan in the template's sections. Accepting it in the plan-mode dialog only
+ends plan mode: Claude then writes it to `plan.md`. In both modes the code gate opens when you
+approve that file (`Approve plan` or `sdlc approve plan`).
 
 The tests stay locked until the person unlocks them. Claude can only ask: the plugin gives it a
 `request_test_unlock` tool (`mcp__sdlc__request_test_unlock`), which turns the band's action into

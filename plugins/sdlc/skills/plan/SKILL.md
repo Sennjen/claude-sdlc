@@ -9,8 +9,8 @@ Design review happens here, while changing course is still a matter of editing a
 document. Code edits stay blocked by hooks until the user approves this plan.
 
 **Plan mode.** The playbook drafts the plan in Claude Code plan mode, where you can read the
-codebase but not change it. The SDLC bar's *Write plan* starts this skill there (`/plan`).
-If the session is in plan mode:
+codebase but not change it. The SDLC bar's *Write plan* runs this skill in the current mode;
+the user enters plan mode only by choice (`Shift+Tab`). If the session is in plan mode:
 - do steps 1 and 2 as below, then present the plan with ExitPlanMode instead of writing
   `plan.md` (plan mode allows no file writes). Use the template's sections, so the plan
   the user accepts is the one that lands in `plan.md`;

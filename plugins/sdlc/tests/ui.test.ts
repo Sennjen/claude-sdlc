@@ -363,10 +363,10 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(fake.toasts).toContain('The user (Tester) APPROVED spec.md of `feat-a` (sha256 bbbbbbbbbbbb)')
     expect(await ui.find({ key: 'approve' })).toBeUndefined()
 
-    // The plan is drafted in plan mode: Write plan runs /plan with the sdlc:plan task.
+    // Write plan runs the skill directly, not /plan: plan mode would drop bypassPermissions.
     expect((await ui.find({ key: 'write' }))?.props.label).toBe('Write plan')
     await ui.press({ key: 'write' })
-    expect(fake.ran).toEqual(['plan Write plan.md for feature `feat-a` with the sdlc:plan skill.'])
+    expect(fake.ran).toEqual(['sdlc:plan'])
   })
 
   test(`${surface}: the current artifact in the band opens in the Files pane`, async ($, on) => {

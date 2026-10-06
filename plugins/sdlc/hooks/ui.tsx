@@ -337,12 +337,9 @@ function nextAction($: EngineInterface, s: On, steps: Steps = NO_STEPS): Action 
   const info = stage ? s.stages[stage] : undefined
   if (!stage || !info) return null
   if (info.state === 'missing') {
-    // The plan is drafted in plan mode, read-only until the person accepts it; plan.md is
-    // written after that, and only `sdlc approve plan` opens the code gate.
-    if (stage === 'plan') {
-      const task = `Write plan.md for feature \`${s.active}\` with the sdlc:plan skill.`
-      return { key: 'write', label: 'Write plan', run: () => runCommand($, '/plan', task) }
-    }
+    // The plan skill runs outside plan mode too: plan mode replaces the session's permission
+    // mode (a bypassPermissions session then asks about every Bash read), and the code gate
+    // already keeps code untouched until `sdlc approve plan`.
     return { key: 'write', label: `Write ${stage}`, run: () => runCommand($, `/sdlc:${stage}`) }
   }
   if ((info.state === 'draft' || info.state === 'stale') && info.sha256) {
