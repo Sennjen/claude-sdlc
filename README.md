@@ -87,6 +87,20 @@ docs/sdlc/<feature>/
   write files or send user commands through a script. The hooks keep a
   cooperative agent honest; they are not a sandbox. For hard guarantees, use managed
   settings and sandboxing.
+- In-place edits are judged by the files they edit: `sed`/`gsed` with `-i` or
+  `--in-place[=SUFFIX]` (GNU long options may be cut to a unique prefix), BSD `sed` with `-I`,
+  and `perl`/`ruby` with `-i`. A BSD suffix of its own (`sed -i '' ...`, `sed -i .bak ...`) is
+  neither script nor file, unless the GNU reading would edit it: the hook checks that on disk
+  only for one simple command and a word with nothing to expand, and otherwise counts the word
+  as a file. Words after the first operand are files (perl, ruby, BSD sed). One with no file
+  left counts as an unknown target. Not detected: the sed script commands `w`, `W` and `e`,
+  `gawk -i inplace`, and a program behind a wrapper (`env`, `xargs`, `find -exec`) or a
+  subshell opened with a lone `( `.
+- A shell variable in a write target (`S=/tmp/out; cp a $S/`) is expanded only from a literal
+  value the same command assigns once, at top level, before the target, with no compound
+  command, subshell or variable-setting builtin (`read`, `printf -v`, `cd`...) before it.
+  Any other variable is read as written, so `cp a $X/app.js` counts as a write to `$X/app.js`
+  in the repository. Targets are normalized first: `/tmp/../repo/src/app.js` is not a tmp path.
 - The deploy gate looks at what a Bash call runs. A gated word inside a file name
   (`cat upload-assets.ts`), a heredoc body or quoted text with spaces (`git commit -m "..."`)
   counts only when it is executed: the program itself, a script given to `bash`/`python3`/`tsx`,

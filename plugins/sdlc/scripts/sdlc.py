@@ -382,56 +382,234 @@ HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1([^\n]*)\n(.*?)^\s*\2\s*$", re.S | 
 QUOTED = re.compile(r"'[^']*'|\"(?:\\.|[^\"\\])*\"")
 
 
-def strip_literals(cmd):
-    """Drop heredoc bodies and quoted strings so `a => b` inside them is not a redirect."""
-    cmd = HEREDOC.sub(lambda m: "<<" + m.group(3), cmd)
-    return QUOTED.sub("''", cmd)
+QUOTE_MARK = re.compile(r"\x01(\d+)\x01")
+SHELL_VAR = re.compile(r"\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))")
+SEPARATOR = re.compile(r"(&&|\|\||[;|\n])")
+ASSIGNMENT = re.compile(r"^[A-Za-z_]\w*=")
+ASSIGNED = re.compile(r"(?<![\w$])([A-Za-z_]\w*)\+?=|\$\{([A-Za-z_]\w*):?[=+]")
+# Past any of these a variable may hold another value (or an assignment may not have run):
+# compound commands, subshells, substitutions, and builtins that set variables or $PWD.
+COMPOUND = re.compile(r"[()`]|(?:^|\s)(?:[{}]|if|then|else|elif|fi|for|while|until|do|done|case|esac|select"
+                      r"|function|eval|source|\.|declare|typeset|local|readonly|read|unset|mapfile"
+                      r"|readarray|getopts|let|printf|cd|pushd|popd|wait|coproc|exec)(?=\s|$)")
 
 
-def bash_write_targets(cmd):
-    """Best-effort list of paths a shell command writes to ("?" means unknown)."""
-    targets = []
-    for m in REDIRECT.finditer(strip_literals(cmd)):
-        targets.append(m.group(1))
-    for seg in split_segments(HEREDOC.sub(lambda m: "<<" + m.group(3), cmd)):
-        try:
-            tokens = shlex.split(seg)
-        except ValueError:
-            tokens = seg.split()
-        while tokens and re.match(r"^\w+=", tokens[0]):
-            tokens.pop(0)
-        if not tokens:
+def hide_quotes(text):
+    """Quoted strings -> \\x01N\\x01 markers, so `;`, `|` and `>` inside them stay text.
+    A raw \\x01 in the command is replaced first, so no marker can be forged."""
+    quoted = []
+
+    def keep(m):
+        quoted.append(m.group(0))
+        return "\x01%d\x01" % (len(quoted) - 1)
+    return QUOTED.sub(keep, text.replace("\x01", "�")), quoted
+
+
+def shell_word(token, quoted, env):
+    """A word of hidden text as the shell reads it: known variables expanded (never inside
+    single quotes) and quotes removed. Unknown variables stay as written."""
+    def expand(text):
+        return SHELL_VAR.sub(lambda m: env.get(m.group(1) or m.group(2), m.group(0)), text)
+
+    def unquote(m):
+        q = quoted[int(m.group(1))]
+        return q[1:-1] if q[0] == "'" else expand(q[1:-1])
+    return QUOTE_MARK.sub(unquote, expand(token))
+
+
+def literal_value(value, quoted):
+    """The text of an assigned value that expands nothing, or None."""
+    double = [quoted[int(n)] for n in QUOTE_MARK.findall(value) if quoted[int(n)][0] == '"']
+    if re.search(r"[$`]", value) or any(re.search(r"[$`]", q) for q in double):
+        return None
+    text = shell_word(value, quoted, {})
+    return text if text and not re.search(r"[\s*?\[]", text) else None
+
+
+def split_words(seg):
+    try:
+        return shlex.split(seg)
+    except ValueError:
+        return seg.split()
+
+
+SUFFIX = re.compile(r"^[.~_][^/\s]*$")
+# What the shell expands in a word before a program sees it: a word with any of these is not
+# the path its text spells.
+EXPANDS = re.compile(r"[$`*?\[{~]")
+# GNU sed long options a script or value hangs on, with the shortest prefix getopt_long
+# takes for each (`--f` is ambiguous with --follow-symlinks).
+SED_LONG = {"in-place": 1, "expression": 1, "file": 2, "line-length": 1}
+# perl/ruby letters whose value is the rest of the cluster (`-Ilib`, `-Mstrict`, `-rjson`),
+# and letters followed by optional digits after which the cluster goes on (`-0777`, `-l`).
+VALUE_LETTERS = {"perl": "IMmxdDF", "ruby": "IrCEFKx"}
+DIGIT_LETTERS = {"perl": "0lC", "ruby": "0TW"}
+
+
+def sed_long(name):
+    return next((opt for opt, least in SED_LONG.items() if len(name) >= least and opt.startswith(name)), None)
+
+
+def inplace_targets(prog, args, literal, exists):
+    """Files an in-place edit writes, as words of hidden text: `sed`/`gsed` with -i, -I or
+    --in-place, `perl`/`ruby` with -i. None when nothing is edited in place; ["?"] when no
+    file is left. `literal(word)` is the word without quotes and with nothing expanded;
+    `exists(word)` says whether it names an existing path (unknown words count as existing).
+
+    BSD sed takes a backup suffix as a word of its own (`sed -i '' ...`), GNU sed never does.
+    Where that word could be either, the BSD reading is taken, and the word the GNU reading
+    would edit is added back when it names an existing file: in-place edits never create one.
+    perl, ruby and BSD sed read no option after the first operand (every later word is a
+    file); GNU sed reads options anywhere: for sed both readings' files count."""
+    is_sed = prog in ("sed", "gsed")
+    script_letters = "ef" if is_sed else ("eE" if prog == "perl" else "e")
+    inplace = script_given = script_before = False
+    suffix_word = first = None
+    positional, i = [], 0
+    while i < len(args):
+        word, lit = args[i], literal(args[i])
+        i += 1
+        if lit == "--":
+            positional += args[i:]
+            break
+        if lit.startswith("--"):
+            name, eq, _ = lit[2:].partition("=")
+            opt = sed_long(name) if is_sed and name else None
+            if opt == "in-place":
+                inplace = True
+            elif opt in ("expression", "file", "line-length"):
+                script_given = script_given or opt != "line-length"
+                i += 0 if eq else 1
             continue
-        prog = os.path.basename(tokens[0])
-        args = tokens[1:]
-        if prog == "tee":
-            targets += [a for a in args if not a.startswith("-")]
-        elif INPLACE.match(prog) and any(re.match(r"^-[a-zA-Z]*i", a) for a in args):
-            positional, skip = [], False
-            for a in args:
-                if skip:
-                    skip = False
-                    continue
-                if a in ("-e", "-f", "--expression"):
-                    skip = True
-                    continue
-                if not a.startswith("-"):
-                    positional.append(a)
-            has_expr = any(a in ("-e", "--expression") for a in args)
-            targets += positional if has_expr else positional[1:]
-        elif prog in ("cp", "mv", "install", "rsync", "ln") and args:
-            positional = [a for a in args if not a.startswith("-")]
-            if len(positional) >= 2:
-                targets.append(positional[-1])
-        elif prog in ("patch",) or (prog == "git" and args[:1] == ["apply"]):
-            targets.append("?")
-        elif prog in ("touch", "truncate"):
-            targets += [a for a in args if not a.startswith("-")]
-        elif prog == "dd":
-            targets += [a[3:] for a in args if a.startswith("of=")]
+        if not lit.startswith("-") or lit == "-":
+            if first is None:
+                first, script_before = i - 1, script_given
+            positional.append(word)
+            if not is_sed:
+                positional += args[i:]  # perl and ruby read no option past the first operand
+                break
+            continue
+        letters, j = lit[1:], 0
+        while j < len(letters):
+            c, rest = letters[j], letters[j + 1:]
+            if c == "i" or (is_sed and c == "I"):
+                inplace = True
+                # BSD sed: a suffix of its own may follow a bare -i/-I ('' for no backup).
+                if not rest and prog == "sed" and i < len(args):
+                    nxt = literal(args[i])
+                    if nxt == "" or SUFFIX.match(nxt):
+                        suffix_word, i = args[i], i + 1
+                break  # the rest of the cluster, if any, is the suffix
+            if c in script_letters:
+                script_given = True
+                i += 0 if rest else 1  # the script is attached, or the next word
+                break
+            if is_sed and c == "l":
+                # GNU -l N takes digits; BSD -l is a flag of its own.
+                if not rest and i < len(args) and literal(args[i]).isdigit():
+                    i += 1
+                break
+            if not is_sed and c in VALUE_LETTERS.get(prog, ""):
+                break
+            j += 1
+            if not is_sed and c in DIGIT_LETTERS.get(prog, ""):
+                while j < len(letters) and letters[j].isdigit():
+                    j += 1
+    if not inplace:
+        return None
+    files = positional if script_given else positional[1:]
+    if is_sed and first is not None:
+        # The BSD reading: past the first operand every word is a file (`--` there is not one
+        # anyone edits), the operand itself too when a script was given before it.
+        rest = [w for w in args[first + 1:] if literal(w) != "--"]
+        bsd = ([args[first]] if script_before else []) + rest
+        files = files + [w for w in bsd if w not in files]
+    if suffix_word is not None:
+        # The GNU reading edits the suffix word (a script was given) or the first positional.
+        other = suffix_word if script_given else (positional[0] if positional else None)
+        if other is not None and exists(other):
+            files = [other] + files
+    return files or ["?"]
+
+
+def segment_targets(seg, tokens, quoted, cwd=None, can_stat=False):
+    """Write targets of one command segment, as words of hidden text. Only with `can_stat`
+    (one simple command, so the hook's cwd is the command's) and a word the shell does not
+    expand does the hook look a word up on disk; otherwise every word counts as existing."""
+    targets = [m.group(1) for m in REDIRECT.finditer(seg)]
+
+    def literal(w):
+        return shell_word(w, quoted, {})
+
+    # The program follows prefix assignments and the keywords of a list (`do sed ...`).
+    while tokens and (re.match(r"^\w+=", tokens[0]) or literal(tokens[0]) in KEYWORDS):
+        tokens = tokens[1:]
+    if not tokens:
+        return targets
+
+    def exists(w):
+        text = literal(w)
+        return (not can_stat or bool(EXPANDS.search(text))
+                or os.path.exists(os.path.join(cwd or os.getcwd(), text)))
+
+    # A quoted program name is still that program; `(sed` and `{sed` open a group before it.
+    prog = os.path.basename(literal(tokens[0]).lstrip("({"))
+    args = tokens[1:]
+    if prog == "tee":
+        targets += [a for a in args if not a.startswith("-")]
+    elif INPLACE.match(prog):
+        targets += inplace_targets(prog, args, literal, exists) or []
+    elif prog in ("cp", "mv", "install", "rsync", "ln") and args:
+        positional = [a for a in args if not a.startswith("-")]
+        if len(positional) >= 2:
+            targets.append(positional[-1])
+    elif prog in ("patch",) or (prog == "git" and args[:1] == ["apply"]):
+        targets.append("?")
+    elif prog in ("touch", "truncate"):
+        targets += [a for a in args if not a.startswith("-")]
+    elif prog == "dd":
+        targets += [a[3:] for a in args if a.startswith("of=")]
+    return targets
+
+
+def bash_write_targets(cmd, cwd=None):
+    """Best-effort list of paths a shell command writes to ("?" means unknown).
+
+    A variable in a target is expanded only from a literal value that the command assigns
+    once, at top level, before the target, with no compound syntax or variable-setting
+    builtin before either. Any other variable stays as written: the strict reading."""
+    hidden, quoted = hide_quotes(HEREDOC.sub(lambda m: "<<" + m.group(3), cmd))
+    counts = {}
+    for m in ASSIGNED.finditer(hidden):
+        name = m.group(1) or m.group(2)
+        counts[name] = counts.get(name, 0) + 1
+    parts = SEPARATOR.split(hidden)
+    # Words are looked up on disk only in one simple command: anything more (a list, a loop,
+    # a subshell, cd in any spelling) can run the command elsewhere than the hook's cwd.
+    can_stat = len(parts) == 1 and not COMPOUND.search(hidden)
+    env, straight, targets = {}, True, []
+    for i in range(0, len(parts), 2):
+        seg = parts[i]
+        before = parts[i - 1] if i else ";"
+        after = parts[i + 1] if i + 1 < len(parts) else ";"
+        if COMPOUND.search(seg):
+            env, straight = {}, False
+        tokens = split_words(seg)
+        found = segment_targets(seg, tokens, quoted, cwd, can_stat)
+        targets += [shell_word(t, quoted, env) for t in found]
+        words = tokens[1:] if tokens[:1] == ["export"] else tokens
+        if (straight and words and before in (";", "\n") and after != "|"
+                and all(ASSIGNMENT.match(w) for w in words)):
+            for w in words:
+                name, value = w.split("=", 1)
+                text = literal_value(value, quoted)
+                if text is not None and counts.get(name) == 1:
+                    env[name] = text
     clean = []
     for t in targets:
         t = t.strip("'\"")
+        if t and t != "?":
+            t = os.path.normpath(t)
         if not t or t in SAFE_SINKS or t.startswith(TMP_PREFIXES):
             continue
         clean.append(t)
@@ -856,11 +1034,12 @@ def hook_pre_bash(data, p):
                                "verification passed and the PR review (skill sdlc:review) is done." % cmd[:120])
     cwd = data.get("cwd") or p.root
     scratch = data.get("scratchpad_dir")
-    for target in bash_write_targets(cmd):
+    for target in bash_write_targets(cmd, cwd):
         if target == "?":
             reason = code_gate(p, sid)
             if reason:
-                pre_decision("deny", "Applying patches is blocked. " + reason)
+                pre_decision("deny", "A shell write whose target the hook cannot read (a patch, an "
+                                     "in-place edit with no file) is blocked. " + reason)
             continue
         if scratch and os.path.abspath(os.path.join(cwd, target)).startswith(os.path.abspath(scratch)):
             continue

@@ -45,8 +45,11 @@ class HookTest(unittest.TestCase):
     def hook(self, name, **payload):
         data = {"session_id": SID, "cwd": self.root}
         data.update(payload)
+        # Claude Code sets CLAUDE_PROJECT_DIR for hooks; point it at the test repo so a host
+        # project (e.g. this repo with SDLC enabled) never leaks into the hook under test.
         r = subprocess.run([sys.executable, SCRIPT, "hook", name], input=json.dumps(data),
-                           capture_output=True, text=True, cwd=self.root)
+                           capture_output=True, text=True, cwd=self.root,
+                           env=dict(os.environ, CLAUDE_PROJECT_DIR=self.root))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("hook error", r.stderr)
         return json.loads(r.stdout) if r.stdout.strip() else {}
@@ -189,6 +192,179 @@ class HookTest(unittest.TestCase):
         self.assertEqual(self.bash("dd if=src/app.js of=/tmp/x"), "allow")
         self.to_build()
         self.assertEqual(self.bash("sed -i '' 's/1/2/' src/app.js"), "allow")
+
+    def assertBash(self, cases):
+        for cmd, expected in cases:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.bash(cmd), expected)
+
+    def test_bash_targets_resolve_shell_vars(self):
+        # The code gate is closed (no feature): only writes outside the repo pass.
+        self.assertBash([
+            ("S=/tmp/sdlc-out; cp src/app.js $S/", "allow"),
+            ("export S=/tmp/sdlc-out && cp src/app.js ${S}/copy.js", "allow"),
+            ("T=src/app.js; cp x $T", "deny"),
+            # Ambiguous or unknown values keep the old, strict reading of the literal text.
+            ("T=/tmp/x; T=src/app.js; cp x $T", "deny"),
+            ("T=src/app.js; (T=/tmp/x); cp x $T", "deny"),
+            ("for T in /tmp/x; do cp x $T; done; T=/tmp/y; cp x $T", "deny"),
+            ("T=$(pwd)/src; cp x $T/app.js", "deny"),
+            ("cp x $UNSET/app.js", "deny"),
+            # A value may change before the target: builtins, cd, conditions, pipelines.
+            ("S=/tmp/x; read S <<< src; cp x $S/app.js", "deny"),
+            ("S=/tmp/x; printf -v S '%s' src; cp x $S/app.js", "deny"),
+            ("S=/tmp/x; cd src; cp x $S/../app.js", "deny"),
+            ("false && S=/tmp/x; cp x $S/app.js", "deny"),
+            ("S=/tmp/x | cat; cp x $S/app.js", "deny"),
+            ("S=/tmp/x; S+=/../..%s/src; cp x $S/app.js" % self.root, "deny"),
+            # Single quotes never expand; double quotes do.
+            ("S=/tmp/x; mkdir '$S'; cp x '$S/../src/app.js'", "deny"),
+            ('S=/tmp/x; cp x "$S/out.js"', "allow"),
+        ])
+
+    def test_bash_targets_are_normalized_and_unquoted(self):
+        self.assertBash([
+            ("cp x /tmp/..%s/src/app.js" % self.root, "deny"),
+            ("S=/tmp/..%s/src; cp x $S/app.js" % self.root, "deny"),
+            ('echo x > "src/app.js"', "deny"),
+            ("echo x > 'src/app.js'", "deny"),
+            ('echo "a > b" > /tmp/sdlc-out', "allow"),
+        ])
+
+    # fix-sed-inplace-parsing: the code gate is closed (no feature); /tmp/x is outside the repo.
+    def test_inplace_bsd_suffix(self):
+        self.assertBash([
+            # AC1: a BSD suffix of its own is neither the script nor a file
+            ("sed -i '' 's/a/b/' /tmp/x", "allow"),
+            ('sed -i "" \'s/a/b/\' /tmp/x', "allow"),
+            ("sed -i .bak 's/a/b/' /tmp/x", "allow"),
+            ("sed -i '' 's/a/b/' src/app.js", "deny"),
+            ("sed -i .bak 's/a/b/' src/app.js", "deny"),
+            # AC2: the edited file decides, here a protected one
+            ("sed -i '' 's/a/b/' CLAUDE.md", "ask"),
+            # AC8: no file left is an unknown target
+            ("sed -i '' 's/a/b/'", "deny"),
+        ])
+
+    def test_inplace_gnu_and_perl_unchanged(self):
+        # AC3
+        self.assertBash([
+            ("sed -i 's/a/b/' /tmp/x", "allow"),
+            ("sed -i.bak 's/a/b/' /tmp/x", "allow"),
+            ("perl -pi -e 's/a/b/' /tmp/x", "allow"),
+            ("perl -i.bak -pe 's/a/b/' /tmp/x", "allow"),
+            ("sed -i 's/a/b/' src/app.js", "deny"),
+            ("sed -i.bak 's/a/b/' src/app.js", "deny"),
+            ("perl -pi -e 's/a/b/' src/app.js", "deny"),
+            ("perl -i.bak -pe 's/a/b/' src/app.js", "deny"),
+        ])
+
+    def test_inplace_long_and_capital_forms(self):
+        self.assertBash([
+            # AC4
+            ("sed --in-place 's/a/b/' src/app.js", "deny"),
+            ("sed --in-place=.bak 's/a/b/' src/app.js", "deny"),
+            ("sed --in-place 's/a/b/' /tmp/x", "allow"),
+            # AC5: -I is in-place for sed, an include path for perl
+            ("sed -I '' 's/a/b/' src/app.js", "deny"),
+            ("perl -I lib -e 'print 1'", "allow"),
+        ])
+
+    def test_inplace_script_options(self):
+        # AC6: a script given by option leaves every positional a file
+        self.assertBash([
+            ("sed -i -f fix.sed src/app.js", "deny"),
+            ("sed -i --expression=s/a/b/ src/app.js", "deny"),
+        ])
+
+    def test_inplace_values_and_double_dash(self):
+        # AC7
+        self.assertBash([
+            ("sed -i -l 80 's/a/b/' /tmp/x", "allow"),
+            ("sed -i -- 's/a/b/' /tmp/x", "allow"),
+            ("sed -i -- 's/a/b/' src/app.js", "deny"),
+        ])
+
+    def test_inplace_review_findings(self):
+        # A word read as suffix or script that names an existing file is still a target (NFR1).
+        self.write(".eslintrc.js", "x\n")
+        self.assertBash([
+            # gsed is GNU: a suffix is never a word of its own
+            ("gsed -e 's/a/b/' -i .eslintrc.js /tmp/x", "deny"),
+            ("sed -e 's/a/b/' -i .eslintrc.js /tmp/x", "deny"),
+            ("sed -e 's/a/b/' -i .bak /tmp/x", "allow"),
+            ("sed -ni '' src/app.js /tmp/x", "deny"),
+            # BSD -l takes no value; GNU -l takes digits
+            ("sed -i '' -l 's/a/b/' src/app.js /tmp/x", "deny"),
+            # GNU long options may be cut to a unique prefix
+            ("sed --in-pl 's/a/b/' src/app.js", "deny"),
+            ("sed --i=.bak 's/a/b/' src/app.js", "deny"),
+            ("sed -i --expr=s/a/b/ src/app.js /tmp/x", "deny"),
+            # a raw marker byte in the command must not crash the hook (fail open)
+            ("sed -i s/a/b/ src/app.js \x019\x01", "deny"),
+            # perl/ruby: -I and -M take values, so their letters are not flags
+            ("perl -Ilib -e 'print 1'", "allow"),
+            ("perl -Mstrict -e 'print 1'", "allow"),
+            ("ruby -Ilib -e 'p 1'", "allow"),
+            ("perl -Ilib -pi -e 's/a/b/' src/app.js", "deny"),
+            # a quoted program name is still that program
+            ("'sed' -i 's/a/b/' src/app.js", "deny"),
+            ('"perl" -pi -e \'s/a/b/\' src/app.js', "deny"),
+        ])
+
+    def test_inplace_after_cd(self):
+        # After an in-command cd the hook cannot stat words where the shell will: a word the
+        # GNU reading edits stays a target.
+        self.write("src/.b.js", "x\n")
+        self.assertBash([
+            ("cd src && sed -e 's/a/b/' -i .b.js /tmp/x", "deny"),
+            ("pushd src && sed -e 's/a/b/' -i .b.js /tmp/x", "deny"),
+            ("(cd src; sed -ni '' app.js /tmp/x)", "deny"),
+            ("sed -e 's/a/b/' -i .bak /tmp/x", "allow"),
+        ])
+
+    def test_inplace_exists_only_for_simple_commands(self):
+        # The hook checks a word against the disk only for one simple command and a word with
+        # nothing for the shell to expand; anywhere else the word counts as a file.
+        self.write(".eslintrc.js", "x\n")
+        self.write("src/.b.js", "x\n")
+        self.assertBash([
+            # globs, braces and ~ expand to real files the hook cannot see in the text
+            ("sed -e 's/a/b/' -i .eslint*.js /tmp/x", "deny"),
+            ("sed -e 's/a/b/' -i .eslintrc.{js,x} /tmp/x", "deny"),
+            ("sed -ni '' src/*.js /tmp/x", "deny"),
+            # directory changes the hook cannot follow: quoted, zsh chdir, a later cd in a loop
+            ("'cd' src && sed -e 's/a/b/' -i .b.js /tmp/x", "deny"),
+            ("chdir src && sed -e 's/a/b/' -i .b.js /tmp/x", "deny"),
+            ("for i in 1 2; do sed -e 's/a/b/' -i .b.js /tmp/x; cd src; done", "deny"),
+            # one simple command with a plain word keeps the BSD reading
+            ("sed -i '' 's/a/b/' /tmp/x", "allow"),
+            ("sed -e 's/a/b/' -i .bak /tmp/x", "allow"),
+        ])
+
+    def test_inplace_operands_read_strictly(self):
+        self.assertBash([
+            # perl and ruby stop reading options at the first operand: the rest are files
+            ("perl -pi -e 's/a/b/' /tmp/x -e src/app.js", "deny"),
+            ("ruby -pi -e 'x' /tmp/x -e src/app.js", "deny"),
+            # BSD sed stops there too; GNU sed reads options anywhere: both readings count
+            ("sed -i '' 's/a/b/' /tmp/x -e src/app.js", "deny"),
+            ("sed -i src/app.js -e 's/a/b/'", "deny"),
+            ("sed -i 's/a/b/' /tmp/x -- src/app.js", "deny"),
+        ])
+
+    def test_inplace_option_forms(self):
+        # FR1, FR3, FR5, FR6 forms the first tests left out
+        self.assertBash([
+            ("sed -i '~' 's/a/b/' /tmp/x", "allow"),
+            ("sed --in-place=.bak 's/a/b/' /tmp/x", "allow"),
+            ("sed -i --file fix.sed src/app.js", "deny"),
+            ("sed -i --file=fix.sed src/app.js", "deny"),
+            ("sed -i --expression 's/a/b/' src/app.js", "deny"),
+            ("sed -i -ne 's/a/b/p' src/app.js", "deny"),
+            ("sed -i --line-length=80 's/a/b/' /tmp/x", "allow"),
+            ("sed -i --line-length 80 's/a/b/' /tmp/x", "allow"),
+        ])
 
     def test_protected_and_deploy_ask(self):
         self.to_build()
