@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: approved-intent-gets-a-plan-first
+context:
+  scaffold_script: fixture.sh

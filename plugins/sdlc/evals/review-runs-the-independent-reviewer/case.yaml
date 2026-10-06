@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: review-runs-the-independent-reviewer
+context:
+  scaffold_script: fixture.sh
