@@ -2,7 +2,7 @@
 """AI-native SDLC gatekeeper for Claude Code.
 
 Hooks (stdin = hook JSON):   sdlc.py hook <prompt|pre-edit|pre-bash|post-edit|stop>
-Agent-safe CLI:              sdlc.py cli <status|new|lock-tests|features>
+Agent-safe CLI:              sdlc.py cli <status|state|new|lock-tests|features>
 
 The plugin is inert in any repository that has no sdlc.config.json.
 Stage approvals are recorded only from real user prompts (UserPromptSubmit),
@@ -283,6 +283,56 @@ class Project(object):
             if self.cfg["verify"]:
                 lines.append("[SDLC] Verify commands: " + " && ".join(self.cfg["verify"]))
         return "\n".join(lines)
+
+    def last_verify(self, sid):
+        """The newest verify-pass/verify-fail audit entry of a session, or None."""
+        try:
+            with open(os.path.join(self.state, "audit.log"), "rb") as f:
+                f.seek(0, os.SEEK_END)
+                f.seek(max(0, f.tell() - 65536))
+                lines = f.read().decode("utf-8", "replace").splitlines()
+        except OSError:
+            return None
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("event") in ("verify-pass", "verify-fail") and entry.get("session") == sid:
+                return {"ok": entry["event"] == "verify-pass", "at": entry.get("at"),
+                        "report": entry.get("report")}
+        return None
+
+    def state_dict(self, sid=None):
+        """Machine-readable status for UIs (hooks/ui.tsx). Read-only."""
+        slug = self.active()
+        out = {"enabled": True, "root": self.root, "active": slug, "stage": None,
+               "stage_state": None, "stage_label": None, "next_skill": None, "code_gate": "closed",
+               "artifact": None, "stages": {}, "features": [], "tests_locked": self.tests_locked(),
+               "fasttrack": self.session(sid).get("fasttrack") if sid else None,
+               "verify": {"commands": self.cfg["verify"], "last": self.last_verify(sid) if sid else None}}
+        if slug:
+            approvals = self.approvals(slug)
+            for s in STAGES:
+                a = approvals.get(s) or {}
+                path = os.path.join(self.fdir(slug), s + ".md")
+                out["stages"][s] = {"state": self.stage_state(slug, s, approvals),
+                                    "path": self.rel(path),
+                                    "sha256": sha256_file(path) if os.path.isfile(path) else None,
+                                    "approved_sha256": a.get("sha256"), "by": a.get("by"),
+                                    "at": a.get("at"), "reason": a.get("reason")}
+            stage, st = self.current_stage(slug)
+            out.update({"stage": stage, "stage_state": st, "stage_label": STAGE_LABEL[stage],
+                        "next_skill": STAGE_SKILL[stage], "done": "done" in approvals})
+            if stage in STAGES:
+                out["artifact"] = out["stages"][stage]["path"]
+        for f in self.features():
+            stage, st = self.current_stage(f)
+            out["features"].append({"slug": f, "stage": stage, "stage_state": st,
+                                    "done": self.is_done(f)})
+        if out["fasttrack"] or code_gate(self, sid) is None:
+            out["code_gate"] = "open"
+        return out
 
 
 # ------------------------------------------------------------------- hook helpers
@@ -1107,12 +1157,17 @@ TEMPLATE_INTENT = os.path.join(PLUGIN_ROOT, "skills", "intent", "template.md")
 
 def cli(argv):
     root = find_root(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()) or find_root(os.getcwd())
+    verb = argv[0] if argv else "status"
+    if verb == "state":
+        sid = argv[argv.index("--session") + 1] if "--session" in argv[:-1] else None
+        print(json.dumps(Project(root).state_dict(sid) if root else {"enabled": False},
+                         ensure_ascii=False))
+        return 0
     if not root:
         print("SDLC is not enabled here (no %s). Only the user can enable it, by running "
               "`/sdlc:init`." % CONFIG_NAME)
         return 1
     p = Project(root)
-    verb = argv[0] if argv else "status"
 
     if verb == "status":
         print(p.status(verbose=True))
@@ -1159,7 +1214,7 @@ def cli(argv):
         print("`sdlc %s` is a user-only command. Ask the user to type `sdlc %s ...` in the chat."
               % (verb, verb))
         return 1
-    print("Usage: sdlc <status|features|new <slug> [type]|lock-tests>")
+    print("Usage: sdlc <status|state [--session ID]|features|new <slug> [type]|lock-tests>")
     return 2
 
 

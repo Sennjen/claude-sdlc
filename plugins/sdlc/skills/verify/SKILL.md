@@ -23,7 +23,9 @@ back if it fails, so run the checks yourself first.
 1. Write a test that reproduces the bug. Run it and confirm it **fails for the right reason**.
 2. Run `sdlc lock-tests`. From now on hooks block edits to test files.
 3. Fix the production code until the test passes. Do not weaken, skip or delete tests.
-4. If the test itself is wrong, explain why and ask the user to type `sdlc unlock tests`.
+4. If the test itself is wrong, or a review finds cases that need new tests, explain why
+   and ask the user to unlock: call the `request_test_unlock` tool where the SDLC bar offers
+   it (the bar then shows `Unlock tests`), or ask them to type `sdlc unlock tests`. Then wait.
 
 ## When checks fail
 Read the full error, find the root cause, fix it, re-run. After two failed attempts at

@@ -479,6 +479,34 @@ class HookTest(unittest.TestCase):
         self.assertNotIn("decision", out)
         self.assertIn("still failing", out.get("systemMessage", ""))
 
+    def test_state_json(self):
+        rc, out = self.cli("state", "--session", SID)
+        self.assertEqual(rc, 0)
+        state = json.loads(out)
+        self.assertTrue(state["enabled"])
+        self.assertIsNone(state["active"])
+        self.assertEqual(state["code_gate"], "closed")
+        self.cli("new", "feat-a")
+        state = json.loads(self.cli("state")[1])
+        self.assertEqual((state["active"], state["stage"], state["stage_state"]), ("feat-a", "intent", "draft"))
+        # hooks/ui.tsx reads these keys; types/index.d.ts declares them (SdlcState, StageInfo)
+        self.assertEqual(set(state), {"enabled", "root", "active", "stage", "stage_state", "stage_label",
+                                      "next_skill", "code_gate", "artifact", "stages", "features",
+                                      "tests_locked", "fasttrack", "verify", "done"})
+        self.assertEqual(set(state["stages"]["intent"]), {"state", "path", "sha256", "approved_sha256",
+                                                          "by", "at", "reason"})
+        self.assertEqual(state["artifact"], "docs/sdlc/feat-a/intent.md")
+        self.assertEqual(state["stages"]["spec"]["state"], "missing")
+        self.to_build()
+        self.write("src/app.js", "console.log(2)\n")
+        self.hook("stop")
+        state = json.loads(self.cli("state", "--session", SID)[1])
+        self.assertEqual((state["stage"], state["code_gate"]), ("build", "open"))
+        self.assertEqual(state["stages"]["plan"]["by"], "Tester")
+        self.assertTrue(state["verify"]["last"]["ok"])
+        os.remove(self.path("sdlc.config.json"))
+        self.assertEqual(json.loads(self.cli("state")[1]), {"enabled": False})
+
     def test_audit_log(self):
         self.edit("src/app.js")
         self.prompt("sdlc trivial")

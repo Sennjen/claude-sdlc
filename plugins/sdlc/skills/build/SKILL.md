@@ -11,7 +11,8 @@ description: SDLC stage 3b (Build) - implement an approved plan.md step by step 
    - write or update the test for the step first where practical;
    - implement the smallest change that makes it pass;
    - run the step's verification command and read the output;
-   - append a line to `progress.md`: step, result, commands run.
+   - append a line to `progress.md` in the form `- [x] Step N: result (commands run)`,
+     where N is the step's number in the plan; the SDLC bar counts these lines.
    Commit at meaningful checkpoints with messages that reference the feature slug.
 3. **Stay inside the plan.** Touch only files listed in *Files affected*. If you need
    another file, a different approach or a new dependency: stop, explain why, update

@@ -1,5 +1,5 @@
 {
-  "description": "AI-native SDLC gates: stage status in every prompt, code-edit gate, deploy gate, Definition of Done on stop. Inert without sdlc.config.json.",
+  "description": "AI-native SDLC gates: stage status in every prompt, code-edit gate, deploy gate, Definition of Done on stop; ui.tsx adds the SDLC band above the prompt and SDLC in the footer. Inert without sdlc.config.json.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -37,5 +37,6 @@
         ]
       }
     ]
-  }
+  },
+  "modules": ["./ui.tsx"]
 }
