@@ -27,7 +27,16 @@ STAGE_LABEL = {"intent": "1 Plan (intent.md)", "spec": "2 Design (spec.md)",
 STAGE_SKILL = {"intent": "sdlc:intent", "spec": "sdlc:spec", "plan": "sdlc:plan",
                "build": "sdlc:build, then sdlc:verify and sdlc:review"}
 MAX_STOP_RETRIES = 2
+# Where the fast-track ends: behaviour decides, not the size of the diff.
+TRIVIAL_RULE = ("Any change that adds or changes behaviour (a new option, flag, endpoint, rule or "
+                "screen, or a bug fix) is a feature, however small: start it with the sdlc:intent "
+                "skill (`sdlc new <slug>`) without asking first. Only a change with no new behaviour "
+                "(a typo, copy text, a comment, a config value) may skip that: then ask the user to "
+                "type `sdlc trivial`.")
 PLUGIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# The plugin's bin/ is not on PATH in every session (plugin eval runs, some hosts).
+CLI_HINT = ("`sdlc` is a shell command; if the shell cannot find it, run %s."
+            % shlex.quote(os.path.join(PLUGIN_ROOT, "bin", "sdlc")))
 
 DEFAULTS = {
     "artifacts_dir": "docs/sdlc",
@@ -267,9 +276,8 @@ class Project(object):
         slug = self.active()
         sess = self.session(sid) if sid else {}
         if not slug:
-            lines.append("[SDLC] No active feature. New feature or bugfix work starts with the "
-                         "sdlc:intent skill (`sdlc new <slug>`). Code edits are blocked until a plan "
-                         "is approved. For a trivial change ask the user to type `sdlc trivial`.")
+            lines.append("[SDLC] No active feature. " + TRIVIAL_RULE + " Code edits are blocked "
+                         "until a plan is approved. " + CLI_HINT)
         else:
             approvals = self.approvals(slug)
             states = ", ".join("%s=%s" % (s, self.stage_state(slug, s, approvals)) for s in STAGES)
@@ -395,8 +403,7 @@ def code_gate(p, sid):
         return None
     slug = p.active()
     if not slug:
-        return ("No active SDLC feature. Start with the sdlc:intent skill (`sdlc new <slug>`), "
-                "or, for a trivial change, ask the user to type `sdlc trivial`.")
+        return "No active SDLC feature. " + TRIVIAL_RULE
     stage, st = p.current_stage(slug)
     if stage == "build":
         return None
@@ -1395,8 +1402,7 @@ def plan_mode_context(p, sid):
         return None
     slug = p.active()
     if not slug:
-        return ("[SDLC] Accepting a plan in plan mode does not open the code gate. Start a feature "
-                "with the sdlc:intent skill, or ask the user to type `sdlc trivial` for a trivial change.")
+        return "[SDLC] Accepting a plan in plan mode does not open the code gate. " + TRIVIAL_RULE
     stage, _ = p.current_stage(slug)
     if stage == "plan":
         return ("[SDLC] The user accepted this plan in plan mode. That is not the SDLC plan approval: "

@@ -17,7 +17,8 @@ passed): check the pre-flight, then go straight to step 4.
    `/code-review` skill is available, run it too. Review categories and severity come
    from `REVIEW.md`. The plugin records the reviewer's verdict line with the code it read:
    `READY FOR HUMAN REVIEW` makes the SDLC bar offer *Create PR*, `CHANGES REQUIRED` makes
-   it offer *Review again*. Any later code change makes the verdict stale.
+   it offer *Review again*. Any later code change makes the verdict stale. In your report,
+   quote the reviewer's verdict line exactly as it wrote it, then its findings.
 3. **Triage findings.** Fix every Blocker. Fix every Major or justify it in the PR. Re-run
    verification and repeat the review once. If a Blocker is still open after that, report
    it to the user instead of opening the PR. Do not argue with a finding without evidence.

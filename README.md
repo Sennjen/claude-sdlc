@@ -39,7 +39,7 @@ that are enforced by hooks, not just requested in a prompt.
 ```
 sdlc approve intent|spec|plan   approve the current artifact
 sdlc skip spec <reason>         small change: go from intent straight to plan
-sdlc trivial [reason]           fast-track for this session (typo, config, one-liner)
+sdlc trivial [reason]           fast-track for this session: no new behaviour (typo, copy, config value)
 sdlc trivial off                end fast-track
 sdlc unlock tests               allow test edits again
 sdlc feature <slug>             switch the active feature

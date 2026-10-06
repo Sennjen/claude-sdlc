@@ -9,7 +9,8 @@ Goal: a short, human-readable, machine-actionable `intent.md` that a product own
 approve. It states the **problem and outcome**, not the solution design.
 
 1. **Name it.** Pick a short kebab-case slug (`claims-status-page`, `fix-login-timeout`).
-   Run `sdlc new <slug> [feature|bugfix|incident]`. It creates
+   Run `sdlc new <slug> [feature|bugfix|incident]` in the shell (Bash); if the shell cannot
+   find `sdlc`, use the full path the [SDLC] status line gives. It creates
    `docs/sdlc/<slug>/intent.md` from [template.md](template.md) and makes it the active
    feature. If a ticket exists (Jira, GitHub issue), read it first and link it.
 2. **Brainstorm with the user.** Ask focused questions, a few at a time, until you can fill
