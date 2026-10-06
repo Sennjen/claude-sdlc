@@ -2,7 +2,7 @@
   "name": "ai-sdlc",
   "description": "AI-native SDLC workflow plugins for Claude Code.",
   "owner": {
-    "name": "Eugen Dzubenko"
+    "name": "Yevhenii Dziubenko"
   },
   "plugins": [
     {
