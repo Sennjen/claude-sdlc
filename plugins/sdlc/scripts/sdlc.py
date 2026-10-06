@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """AI-native SDLC gatekeeper for Claude Code.
 
-Hooks (stdin = hook JSON):   sdlc.py hook <prompt|pre-edit|pre-bash|post-edit|stop>
+Hooks (stdin = hook JSON):   sdlc.py hook <prompt|pre-edit|pre-bash|post-edit|post-tool|subagent-stop|stop>
 Agent-safe CLI:              sdlc.py cli <status|state|new|lock-tests|features>
 
 The plugin is inert in any repository that has no sdlc.config.json.
@@ -41,12 +41,16 @@ DEFAULTS = {
                         "**/CLAUDE.md", "**/CLAUDE.local.md", "REVIEW.md"],
     "test_paths": ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*",
                    "**/*.spec.*", "**/*_test.*", "**/test_*.py", "**/*Test.*", "**/*Tests.*"],
-    "gated_commands": [r"\bgit\s+push\b", r"\bgh\s+pr\s+merge\b", r"\bnpm\s+publish\b",
+    "gated_commands": [r"\bgit(?:\s+-[Cc]\s+\S+|\s+--?[\w.-]+(?:=\S+)?)*\s+push\b", r"\bgh\s+pr\s+merge\b", r"\bnpm\s+publish\b",
                        r"\bterraform\s+apply\b", r"\bkubectl\s+(apply|delete|rollout)\b",
                        r"\bhelm\s+(install|upgrade)\b", r"\bvercel\b.*--prod\b",
                        r"\bfirebase\s+deploy\b", r"\beas\s+(submit|update)\b",
                        r"\bfastlane\b"],
     "gated_command_decision": "ask",
+    # A `git push` that only updates other branches (no force, delete or tags) needs no approval.
+    "protected_branches": ["main", "master", "release/*"],
+    # What pre-edit and pre-bash do when the hook itself fails: "deny" (fail closed) or "allow".
+    "on_hook_error": "deny",
 }
 
 # --------------------------------------------------------------------------- utils
@@ -239,6 +243,17 @@ class Project(object):
     def tests_locked(self):
         return os.path.exists(os.path.join(self.state, "tests-locked"))
 
+    # Local, per feature: the last review verdict and the PR, for the SDLC bar. Only hooks
+    # write them (the agent cannot write .sdlc/); nothing gates on them.
+    def feature_path(self, slug):
+        return os.path.join(self.state, "features", slug + ".json")
+
+    def feature_state(self, slug):
+        return read_json(self.feature_path(slug), {})
+
+    def save_feature_state(self, slug, data):
+        write_json(self.feature_path(slug), data)
+
     def audit(self, event, **kw):
         os.makedirs(self.state, exist_ok=True)
         entry = {"at": now(), "event": event}
@@ -310,7 +325,8 @@ class Project(object):
                "stage_state": None, "stage_label": None, "next_skill": None, "code_gate": "closed",
                "artifact": None, "stages": {}, "features": [], "tests_locked": self.tests_locked(),
                "fasttrack": self.session(sid).get("fasttrack") if sid else None,
-               "verify": {"commands": self.cfg["verify"], "last": self.last_verify(sid) if sid else None}}
+               "verify": {"commands": self.cfg["verify"], "last": self.last_verify(sid) if sid else None},
+               "review": None, "pr": None}
         if slug:
             approvals = self.approvals(slug)
             for s in STAGES:
@@ -326,6 +342,14 @@ class Project(object):
                         "next_skill": STAGE_SKILL[stage], "done": "done" in approvals})
             if stage in STAGES:
                 out["artifact"] = out["stages"][stage]["path"]
+            local = self.feature_state(slug)
+            review = local.get("review")
+            if review:
+                # A review covers the change it read: any later code change makes it stale.
+                current = stage == "build" and review.get("change") == fingerprint(self, base_ref(self))
+                out["review"] = {"verdict": review.get("verdict"), "at": review.get("at"),
+                                 "current": current}
+            out["pr"] = local.get("pr")
         for f in self.features():
             stage, st = self.current_stage(f)
             out["features"].append({"slug": f, "stage": stage, "stage_state": st,
@@ -747,6 +771,127 @@ def gated_pattern(cmd, patterns):
     return scan(cmd, 0) if patterns else None
 
 
+# `git push` options that only change how a branch update is sent. Anything else (force,
+# delete, tags, mirror, all, prune, an abbreviated long option) is read as more than that.
+PUSH_SAFE_LONG = frozenset(("--set-upstream", "--dry-run", "--quiet", "--verbose", "--progress",
+                            "--no-progress", "--verify", "--no-verify", "--porcelain", "--atomic",
+                            "--no-atomic", "--ipv4", "--ipv6", "--thin", "--no-thin", "--signed",
+                            "--no-signed", "--recurse-submodules", "--no-recurse-submodules",
+                            "--push-option", "--repo"))
+PUSH_LONG_VALUE = ("--push-option", "--repo")
+PUSH_SAFE_SHORT = "unqv46o"
+# git commands that may run before a push in the same command without moving HEAD or making tags.
+SAFE_BEFORE_PUSH = ("add", "commit", "status", "diff", "log", "show", "fetch", "push")
+GIT_PUSH = re.compile(r"\bgit(?:\s+-[Cc]\s+\S+|\s+--?[\w.-]+(?:=\S+)?)*\s+push\b")
+
+
+def push_branches(cmd, cwd):
+    """The branches the command's `git push` calls update, or None when one of them may do
+    more than update a branch (force, delete, tags, mirror) or the hook cannot tell where it
+    pushes. Strict: a push hidden in quotes, a heredoc or a substitution, a variable, an
+    option it does not know, or an unknown current branch all read as None."""
+    if HEREDOC.search(cmd) or SUBSTITUTION.search(cmd):
+        return None
+    hidden, quoted = hide_quotes(cmd)
+    if re.search(r"\bGIT_\w*=", hidden):
+        return None  # another repository, work tree or configuration
+    parts = SEPARATOR.split(hidden)
+    knows_cwd = not COMPOUND.search(hidden)
+    branches, seen = [], 0
+    # Whether an earlier part of the command may have moved HEAD or made a tag, so the
+    # repository as the hook sees it now is not the one the push will see.
+    moved = [False]
+
+    def git_out(*args):
+        rc, out = git(cwd, *args)
+        return out.decode().strip() if rc == 0 else ""
+
+    def current():
+        """Where a push of the current branch goes (its push ref, else its own name)."""
+        if not knows_cwd or moved[0] or git_out("config", "--get", "push.default") == "matching":
+            return None
+        if git_out("config", "--get-regexp", r"^remote\..*\.push$"):
+            return None  # configured push refspecs can send the branch anywhere
+        head = git_out("symbolic-ref", "-q", "--short", "HEAD")
+        if not head:
+            return None
+        remote = git_out("for-each-ref", "--format=%(push:remoteref)", "refs/heads/" + head)
+        return remote[len("refs/heads/"):] if remote.startswith("refs/heads/") else head
+
+    def is_tag(name):
+        return not knows_cwd or moved[0] or bool(git_out("show-ref", "--tags", "--", "refs/tags/" + name))
+
+    for seg in parts[0::2]:
+        words = [shell_word(t, quoted, {}) for t in split_words(seg)]
+        runs = run_positions(words)
+        safe_segment = False
+        for i, word in enumerate(words):
+            if i not in runs or program(word) != "git":
+                continue
+            if any(ASSIGNMENT.match(w) for w in words[:i]):
+                return None  # `VAR=x git push`: an environment the hook does not share
+            j = i + 1
+            while j < len(words) and words[j].startswith("-"):
+                # Another repository, or configuration that can change where a push goes.
+                if words[j].split("=", 1)[0] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace"):
+                    return None
+                j += 1
+            sub = words[j] if j < len(words) else ""
+            safe_segment = sub in SAFE_BEFORE_PUSH
+            if sub != "push":
+                break
+            seen += 1
+            args, positional, k = words[j + 1:], [], 0
+            while k < len(args):
+                a = args[k]
+                if EXPANDS.search(a):
+                    return None
+                if a == "--":
+                    positional += args[k + 1:]
+                    break
+                if a.startswith("--"):
+                    name, _, value = a.partition("=")
+                    if name not in PUSH_SAFE_LONG or name == "--recurse-submodules" and value != "check":
+                        return None  # on-demand and only push the submodules' branches too
+                    k += 2 if name in PUSH_LONG_VALUE and "=" not in a else 1
+                    continue
+                if a.startswith("-") and len(a) > 1:
+                    letters = a[1:]
+                    value_at = letters.find("o")
+                    checked = letters if value_at < 0 else letters[:value_at]
+                    if any(c not in PUSH_SAFE_SHORT for c in checked):
+                        return None
+                    k += 2 if value_at == len(letters) - 1 else 1
+                    continue
+                positional.append(a)
+                k += 1
+            refspecs = positional[1:]
+            if not refspecs:
+                refspecs = ["HEAD"]
+            for ref in refspecs:
+                if EXPANDS.search(ref) or ref.startswith(("+", "^")):
+                    return None
+                src, _, dst = ref.partition(":")
+                if not src:
+                    return None  # `:branch` deletes it
+                is_head = src.upper() == "HEAD" or src == "@"
+                dst = dst or src
+                if dst.upper() == "HEAD" or dst == "@":
+                    dst = current()
+                if not dst or not is_head and is_tag(src):
+                    return None
+                if dst.startswith("refs/heads/"):
+                    dst = dst[len("refs/heads/"):]
+                if dst.startswith("refs/") or is_tag(dst):
+                    return None
+                branches.append(dst)
+            break
+        if not safe_segment and words:
+            moved[0] = True
+    # Every `git push` the shell would run must be one the hook read.
+    return branches if seen and seen == len(GIT_PUSH.findall(cmd)) else None
+
+
 STATE_REF = re.compile(r"approvals\.json|(^|[\s/'\"=])\.sdlc(/|\b)|sdlc\.py")
 READERS = frozenset(("cat", "head", "tail", "ls", "wc", "grep", "egrep", "fgrep", "jq", "diff", "cmp",
                      "stat", "shasum", "sha256sum", "md5", "md5sum", "cksum", "cut", "tr", "nl", "echo",
@@ -975,13 +1120,25 @@ def git(root, *args):
     return r.returncode, r.stdout
 
 
-def fingerprint(p):
-    """Hash of changed code files in the work tree; None when not a git repo."""
+def base_ref(p):
+    """Where the feature branch left the default branch (merge-base), or HEAD when there is
+    no default branch to compare with. Commits on the branch do not move it."""
+    rc, out = git(p.root, "symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD")
+    refs = [out.decode().strip()] if rc == 0 and out.strip() else []
+    for ref in refs + ["origin/main", "origin/master", "main", "master"]:
+        rc, out = git(p.root, "merge-base", "HEAD", ref)
+        if rc == 0 and out.strip():
+            return out.decode().strip()
+    return "HEAD"
+
+
+def fingerprint(p, base="HEAD"):
+    """Hash of code files that differ from `base` in the work tree; None when not a git repo."""
     rc, _ = git(p.root, "rev-parse", "--is-inside-work-tree")
     if rc != 0:
         return None
     names = set()
-    rc, out = git(p.root, "diff", "--name-only", "-z", "HEAD")
+    rc, out = git(p.root, "diff", "--name-only", "-z", base)
     if rc != 0:
         rc, out = git(p.root, "ls-files", "-m", "-z")
     names.update(n.decode() for n in out.split(b"\0") if n)
@@ -1030,6 +1187,11 @@ def hook_prompt(data, p):
         p.save_session(sid, sess)
     parts = []
     first_line = (data.get("prompt") or "").strip().splitlines()[:1]
+    command = USER_CMD.match(first_line[0]) if first_line else None
+    if command and command.group(1).lower() == "status":
+        # Nothing for the model to do: show the status without a turn. As the first message
+        # of a new desktop session it also starts the session, and with it the SDLC bar.
+        emit({"decision": "block", "reason": p.status(sid, verbose=True)})
     if first_line:
         msg = handle_user_command(p, sid, first_line[0])
         if msg:
@@ -1059,9 +1221,72 @@ def hook_pre_edit(data, p):
             elif active != m.group(1):
                 pre_context("[SDLC] Active feature is still `%s`. To switch, the user types "
                             "`sdlc feature %s`." % (active, m.group(1)))
+        note = off_plan_note(p, rel, sid)
+        if note:
+            pre_context(note)
         sys.exit(0)
     p.audit("gate-" + decision, tool=data.get("tool_name"), path=rel, reason=reason)
     pre_decision(decision, reason)
+
+
+PLAN_FILES = re.compile(r"^##\s+Files affected[ \t]*$(.*?)(?=^##\s|\Z)", re.M | re.S)
+PATH_WORD = re.compile(r"^[\w.\-/*?]+$")
+LIST_ITEM = re.compile(r"^(?:[-*+]|\d+\.)\s+")
+
+
+def planned_files(p, slug):
+    """Paths, directories and globs under *Files affected* in plan.md, or None when it names none."""
+    try:
+        with open(os.path.join(p.fdir(slug), "plan.md"), encoding="utf-8") as f:
+            section = PLAN_FILES.search(f.read())
+    except OSError:
+        return None
+    entries = []
+    for line in (section.group(1) if section else "").splitlines():
+        line = line.strip()
+        if line.startswith("|"):
+            cell = line.strip("|").split("|")[0].strip()  # the table's first column
+        elif LIST_ITEM.match(line):
+            cell = LIST_ITEM.sub("", line)
+        else:
+            continue
+        for word in re.findall(r"`([^`]+)`", cell) or re.split(r"[\s,]+", cell):
+            word = word.strip("()[]:;'\"")
+            word = word[2:] if word.startswith("./") else word
+            if PATH_WORD.match(word) and ("/" in word or "." in word):
+                entries.append(word)
+    return entries or None
+
+
+def in_plan(rel, entries):
+    for entry in entries:
+        if "*" in entry or "?" in entry:
+            if glob_to_regex(entry).match(rel):
+                return True
+        elif rel == entry.rstrip("/") or rel.startswith(entry.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def off_plan_note(p, rel, sid):
+    """A note, once per file and session, when the build edits a code or test file that the
+    approved plan does not list. It informs; it does not block."""
+    if p.classify(rel) not in ("code", "test"):
+        return None
+    sess = p.session(sid)
+    slug = p.active()
+    if sess.get("fasttrack") or not slug or p.current_stage(slug)[0] != "build":
+        return None
+    entries = planned_files(p, slug)
+    if not entries or in_plan(rel, entries) or rel in sess.get("off_plan", []):
+        return None
+    sess["off_plan"] = sess.get("off_plan", []) + [rel]
+    p.save_session(sid, sess)
+    p.audit("off-plan", feature=slug, path=rel)
+    return ("[SDLC] %s is not in *Files affected* of the approved plan.md of `%s`. The edit goes "
+            "ahead, but the diff and the plan now differ. If the file belongs to the change, add it "
+            "to plan.md and ask the user to re-approve (`sdlc approve plan`); otherwise undo the edit."
+            % (rel, slug))
 
 
 def hook_pre_bash(data, p):
@@ -1076,13 +1301,19 @@ def hook_pre_bash(data, p):
         p.audit("gate-deny", tool="Bash", command=cmd[:300], reason="nested user command")
         pre_decision("deny", "User-only `sdlc` commands count only when the user types them in this "
                              "chat; sending one through another Claude session is blocked. Ask the user.")
+    cwd = data.get("cwd") or p.root
     pattern = gated_pattern(cmd, p.cfg["gated_commands"])
+    if pattern and re.search(pattern, "git push"):
+        # A push that only updates unprotected branches ships nothing: the PR and branch
+        # protection guard what reaches the protected ones. The other patterns still apply.
+        branches = push_branches(cmd, cwd)
+        if branches and not any(matches(b, p.cfg["protected_branches"]) for b in branches):
+            pattern = gated_pattern(cmd, [g for g in p.cfg["gated_commands"] if not re.search(g, "git push")])
     if pattern:
         decision = p.cfg["gated_command_decision"]
         p.audit("gate-" + decision, tool="Bash", command=cmd[:300], reason=pattern)
         pre_decision(decision, "SDLC deploy gate: `%s` needs explicit user approval. Make sure "
                                "verification passed and the PR review (skill sdlc:review) is done." % cmd[:120])
-    cwd = data.get("cwd") or p.root
     scratch = data.get("scratchpad_dir")
     for target in bash_write_targets(cmd, cwd):
         if target == "?":
@@ -1116,6 +1347,85 @@ def hook_post_edit(data, p):
         if not sess.get("dirty"):
             sess["dirty"] = True
             p.save_session(sid, sess)
+    sys.exit(0)
+
+
+REVIEWER = re.compile(r"(?:^|:)sdlc-reviewer$")
+VERDICT = re.compile(r"READY FOR HUMAN REVIEW|CHANGES REQUIRED")
+PR_CREATE = re.compile(r"\b(?:gh\s+pr|glab\s+mr)\s+create\b")
+PR_TOOL = re.compile(r"^mcp__.*(?:create|save|open)_?(?:pull|merge)_?request", re.I)
+PR_URL = re.compile(r"https?://[^\s\"'<>()\[\]\\]+/(?:pull|merge_requests)/\d+")
+
+
+def record_review(p, data, text):
+    """Keep the sdlc-reviewer's verdict with the change it read, for the SDLC bar."""
+    slug = p.active()
+    if not slug or not REVIEWER.search(data.get("agent_type") or ""):
+        return
+    lines = [line for line in (text or "").splitlines() if VERDICT.search(line)]
+    if not lines:
+        return
+    # The last verdict line decides; a line that names both reads as changes required.
+    verdict = "changes" if "CHANGES REQUIRED" in lines[-1] else "ready"
+    local = p.feature_state(slug)
+    local["review"] = {"verdict": verdict, "at": now(), "change": fingerprint(p, base_ref(p))}
+    p.save_feature_state(slug, local)
+    p.audit("review", feature=slug, verdict=verdict, session=data.get("session_id"))
+
+
+def record_pr(p, data):
+    """Keep the URL of a PR (or MR) the agent opened for the active feature."""
+    slug = p.active()
+    tool = data.get("tool_name") or ""
+    command = (data.get("tool_input") or {}).get("command") or ""
+    if not slug or not (PR_TOOL.search(tool) or (tool == "Bash" and PR_CREATE.search(command))):
+        return
+    m = PR_URL.search(json.dumps(data.get("tool_response"), ensure_ascii=False))
+    if not m:
+        return
+    local = p.feature_state(slug)
+    local["pr"] = {"url": m.group(0), "at": now()}
+    p.save_feature_state(slug, local)
+    p.audit("pr", feature=slug, url=m.group(0))
+
+
+def plan_mode_context(p, sid):
+    """What a plan accepted in plan mode means for the SDLC stage, or None."""
+    if p.session(sid).get("fasttrack"):
+        return None
+    slug = p.active()
+    if not slug:
+        return ("[SDLC] Accepting a plan in plan mode does not open the code gate. Start a feature "
+                "with the sdlc:intent skill, or ask the user to type `sdlc trivial` for a trivial change.")
+    stage, _ = p.current_stage(slug)
+    if stage == "plan":
+        return ("[SDLC] The user accepted this plan in plan mode. That is not the SDLC plan approval: "
+                "the code gate stays closed. Write the plan to %s in the sections of the plan "
+                "template (skill sdlc:plan), then ask the user to review it and type `sdlc approve "
+                "plan`. Do not edit code before that." % p.rel(os.path.join(p.fdir(slug), "plan.md")))
+    if stage == "build":
+        return ("[SDLC] plan.md of `%s` is already approved. If the plan you presented changes its "
+                "files, steps or approach, update plan.md and ask the user to re-approve it before "
+                "you edit code." % slug)
+    return ("[SDLC] Feature `%s` is at stage %s: the code gate stays closed until intent, spec and "
+            "plan are approved. Continue with skill %s." % (slug, STAGE_LABEL[stage], STAGE_SKILL[stage]))
+
+
+def hook_post_tool(data, p):
+    tool = data.get("tool_name") or ""
+    if tool == "SubagentHandback":  # auto mode: the subagent's report arrives here
+        record_review(p, data, (data.get("tool_input") or {}).get("message"))
+    elif tool == "ExitPlanMode":
+        context = plan_mode_context(p, data.get("session_id"))
+        if context:
+            emit({"hookSpecificOutput": {"hookEventName": "PostToolUse", "additionalContext": context}})
+    else:
+        record_pr(p, data)
+    sys.exit(0)
+
+
+def hook_subagent_stop(data, p):
+    record_review(p, data, data.get("last_assistant_message"))
     sys.exit(0)
 
 
@@ -1218,19 +1528,43 @@ def cli(argv):
     return 2
 
 
+GATING_HOOKS = ("pre-edit", "pre-bash")
+
+
+def hook_failed(p, name, exc):
+    """A bug in a hook. The gates fail closed unless the config says "on_hook_error": "allow";
+    the other hooks are skipped. Either way the person sees it and audit.log keeps it."""
+    error = "%s: %s" % (type(exc).__name__, str(exc)[:200])
+    sys.stderr.write("sdlc hook error: %r\n" % exc)
+    try:
+        p.audit("hook-error", hook=name, error=error)
+    except Exception:
+        pass
+    note = "SDLC hook `%s` failed (%s)." % (name, error)
+    if name in GATING_HOOKS and p.cfg.get("on_hook_error") != "allow":
+        emit({"systemMessage": note + " The gate failed closed and blocked this call. To let calls "
+                                      "through until it is fixed, set \"on_hook_error\": \"allow\" in "
+                                      "sdlc.config.json.",
+              "hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                     "permissionDecisionReason": note + " The SDLC gate failed closed, "
+                                     "so this call is blocked. Tell the user; do not work around the gate."}})
+    emit({"systemMessage": note + " It was skipped for this call."})
+
+
 def main():
     if len(sys.argv) >= 3 and sys.argv[1] == "hook":
         data, p = load_hook()
+        name = sys.argv[2]
         handler = {"prompt": hook_prompt, "pre-edit": hook_pre_edit, "pre-bash": hook_pre_bash,
-                   "post-edit": hook_post_edit, "stop": hook_stop}.get(sys.argv[2])
+                   "post-edit": hook_post_edit, "post-tool": hook_post_tool,
+                   "subagent-stop": hook_subagent_stop, "stop": hook_stop}.get(name)
         if handler:
             try:
                 handler(data, p)
             except SystemExit:
                 raise
-            except Exception as exc:  # never break the session on a hook bug
-                sys.stderr.write("sdlc hook error: %r\n" % exc)
-                sys.exit(0)
+            except Exception as exc:
+                hook_failed(p, name, exc)
         sys.exit(0)
     if len(sys.argv) >= 2 and sys.argv[1] == "cli":
         sys.exit(cli(sys.argv[2:]))

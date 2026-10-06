@@ -30,6 +30,8 @@ const DRAFT: On1 = {
   tests_locked: false,
   fasttrack: null,
   verify: { commands: ['npm test'], last: null },
+  review: null,
+  pr: null,
 }
 const BUILD: On1 = {
   ...DRAFT,
@@ -71,7 +73,7 @@ function fakeSdlc(on: On, state: SdlcState = DRAFT) {
   // A slash command run as if typed; an unknown one is refused.
   on('command.run', ($, e) => {
     if (!fake.canRun) throw new Error(`unknown command /${e.command}`)
-    fake.ran.push(e.command)
+    fake.ran.push(e.args ? `${e.command} ${e.args}` : e.command)
     return { text: '' }
   })
   // The desktop's view server: show_pane opens a file in its Files pane.
@@ -175,6 +177,7 @@ const PLAN = `# Plan
 ## Risks
 `
 
+const DONE_ALL = '- [x] Step 1: a\n- [x] Step 2: b\n- [X] step 3: c\n- [x] Step 9: not in the plan\n'
 const VERIFIED: On1 ={ ...BUILD, verify: { commands: ['npm test'], last: { ok: true, at: '2026-10-05T18:47:00+02:00', report: null } } }
 const IDLE: On1 = { ...DRAFT, active: null, stage: null, stage_state: null, stage_label: null, next_skill: null,
   artifact: null, stages: {}, features: [] }
@@ -198,10 +201,10 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(fake.filled).toEqual([])
   })
 
-  test(`${surface}: actions in build after verify: close feature, show changes, review`, async ($, on) => {
+  test(`${surface}: actions in build after verify: review, show changes, close feature`, async ($, on) => {
     const fake = fakeSdlc(on, VERIFIED)
     const { band, actionKeys } = await details($, surface)
-    expect(await actionKeys()).toEqual(['done', 'changes', 'review'])
+    expect(await actionKeys()).toEqual(['review', 'changes', 'done'])
 
     await band.press({ key: 'done' })
     expect(fake.commands).toEqual(['sdlc done'])
@@ -257,17 +260,68 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(JSON.stringify((await band.find({ key: 'actions' }))?.children)).toContain('Continue building')
   })
 
-  test(`${surface}: all steps done: the band offers Close feature, the details keep Review`, async ($, on) => {
+  test(`${surface}: all steps done: the band offers Review, the details keep Close feature`, async ($, on) => {
     const fake = fakeSdlc(on, { ...BUILD, tests_locked: true })
     fake.planText = PLAN
-    fake.progressText = '- [x] Step 1: a\n- [x] Step 2: b\n- [X] step 3: c\n- [x] Step 9: not in the plan\n'
+    fake.progressText = DONE_ALL
     const band = await mount($, surface, 'AbovePrompt')
-    expect((await band.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['feature', 'done', 'hide'])
+    expect((await band.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['feature', 'review', 'hide'])
 
     const open = await details($, surface)
     expect(await open.band.find({ text: /^3\/3 steps$/ })).toBeDefined()
+    expect(await open.band.find({ text: /^Not run$/ })).toBeDefined()
     const actionKeys = open.actionKeys
-    expect(await actionKeys()).toEqual(['done', 'verify', 'changes', 'review', 'unlock'])
+    expect(await actionKeys()).toEqual(['review', 'verify', 'changes', 'done', 'unlock'])
+  })
+
+  test(`${surface}: after the build the band leads through Review, Create PR, Close feature`, async ($, on) => {
+    const fake = fakeSdlc(on, BUILD)
+    fake.planText = PLAN
+    fake.progressText = DONE_ALL
+    const band = await mount($, surface, 'AbovePrompt')
+    const keys = async () => (await band.findAll({ type: 'Button' })).map(b => b.key)
+
+    await band.press({ key: 'review' })
+    expect(fake.ran).toEqual(['sdlc:review'])
+
+    // The reviewer asked for changes: review again, with a short warning.
+    fake.state = { ...fake.state, review: { verdict: 'changes', at: '2026-10-06T10:00:00+02:00', current: true } }
+    await fake.clock.advance(10_000)
+    expect(await keys()).toEqual(['feature', 'review', 'hide'])
+    expect((await band.find({ key: 'review' }))?.props.label).toBe('Review again')
+    expect(await band.find({ text: /^changes required$/ })).toBeDefined()
+    expect(fake.toasts).toContain('SDLC review: changes required')
+
+    // A passed review of the code as it is now: Create PR runs the review skill's PR step.
+    fake.state = { ...fake.state, review: { verdict: 'ready', at: '2026-10-06T11:00:00+02:00', current: true } }
+    await fake.clock.advance(10_000)
+    expect(await keys()).toEqual(['feature', 'pr', 'hide'])
+    expect(await band.find({ text: /Build · review passed/ })).toBeDefined()
+    await band.press({ key: 'pr' })
+    expect(fake.ran).toEqual(['sdlc:review', 'sdlc:review pr'])
+
+    // Once the PR exists, the band offers Close feature.
+    fake.state = { ...fake.state, pr: { url: 'https://github.com/o/r/pull/12', at: '2026-10-06T11:05:00+02:00' } }
+    await fake.clock.advance(10_000)
+    expect(await keys()).toEqual(['feature', 'done', 'hide'])
+    expect(await band.find({ text: /Build · PR created/ })).toBeDefined()
+    await band.press({ key: 'done' })
+    expect(fake.commands).toEqual(['sdlc done'])
+  })
+
+  test(`${surface}: a review of older code does not open Create PR`, async ($, on) => {
+    const fake = fakeSdlc(on, { ...VERIFIED, review: { verdict: 'ready', at: '2026-10-06T11:00:00+02:00', current: false } })
+    const { band, actionKeys } = await details($, surface)
+    expect(await actionKeys()).toEqual(['review', 'changes', 'done'])
+    expect(await band.find({ text: /^Out of date$/ })).toBeDefined()
+    expect(fake.ran).toEqual([])
+  })
+
+  test(`${surface}: the details link the PR`, async ($, on) => {
+    const fake = fakeSdlc(on, { ...VERIFIED, pr: { url: 'https://github.com/o/r/pull/12', at: null } })
+    const { band } = await details($, surface)
+    await band.press({ key: 'pr-link', link: { href: 'https://github.com/o/r/pull/12' } })
+    expect(fake.opens).toEqual(['https://github.com/o/r/pull/12'])
   })
 
   test(`${surface}: with no feature the band offers Start feature and Fast-track`, async ($, on) => {
@@ -308,7 +362,11 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(fake.commands).toEqual(['sdlc approve spec'])
     expect(fake.toasts).toContain('The user (Tester) APPROVED spec.md of `feat-a` (sha256 bbbbbbbbbbbb)')
     expect(await ui.find({ key: 'approve' })).toBeUndefined()
-    expect(await ui.find({ key: 'write' })).toBeDefined()
+
+    // The plan is drafted in plan mode: Write plan runs /plan with the sdlc:plan task.
+    expect((await ui.find({ key: 'write' }))?.props.label).toBe('Write plan')
+    await ui.press({ key: 'write' })
+    expect(fake.ran).toEqual(['plan Write plan.md for feature `feat-a` with the sdlc:plan skill.'])
   })
 
   test(`${surface}: the current artifact in the band opens in the Files pane`, async ($, on) => {

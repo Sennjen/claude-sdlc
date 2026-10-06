@@ -374,8 +374,125 @@ class HookTest(unittest.TestCase):
                     ".claude/skills/x/SKILL.md"):
             self.assertEqual(self.edit(rel), "ask", rel)
         self.assertEqual(self.edit(".claude/worktrees/w/src/app.js"), "allow")
-        self.assertEqual(self.bash("git push -u origin feat/a"), "ask")
+        self.assertEqual(self.bash("git push -u origin main"), "ask")
         self.assertEqual(self.bash("git status"), "allow")
+
+    def test_push_gate_reads_where_a_push_goes(self):
+        sh(self.root, "git", "tag", "v1")
+        sh(self.root, "git", "checkout", "-qb", "feat/a")
+        # A plain update of an unprotected branch ships nothing: no approval needed.
+        for cmd in ("git push", "git push -u origin HEAD", "git push origin feat/a",
+                    "git push --set-upstream origin feat/a", "git push -o ci.skip origin feat/a",
+                    "git push --dry-run origin HEAD:feat/b", "git push origin refs/heads/feat/a",
+                    "git push origin @", "git push --recurse-submodules=check origin feat/a",
+                    "git add -A && git commit -m 'wip' && git push -u origin HEAD"):
+            self.assertEqual(self.bash(cmd), "allow", cmd)
+        # Protected branches, force, delete, tags, mirror, and anything the hook cannot read ask.
+        for cmd in ("git push origin main", "git push origin HEAD:main", "git push origin feat/a:master",
+                    "git push origin release/1.0", "git push --force", "git push -f origin feat/a",
+                    "git push -uf origin feat/a", "git push --force-with-lease origin feat/a",
+                    "git push --forc origin feat/a", "git push origin +feat/a", "git push origin :feat/a",
+                    "git push --delete origin feat/a", "git push -d origin feat/a", "git push --tags",
+                    "git push --follow-tags", "git push --mirror", "git push --all", "git push origin v1",
+                    "git push origin refs/tags/v2", "git push origin 'feat/*'", "git push origin $BRANCH",
+                    "git -C ../other push origin feat/a", "git -c push.default=matching push",
+                    "cd sub && git push", "bash -c 'git push origin feat/a'",
+                    "git push origin feat/a && git push origin main",
+                    "git push origin feat/a && npm publish"):
+            self.assertEqual(self.bash(cmd), "ask", cmd)
+        # The repository may change before the push runs, or the push may go elsewhere.
+        for cmd in ("git checkout main && git push", "git switch main; git push -u origin HEAD",
+                    "git tag v9 && git push origin v9", "npm test && git push origin feat/a",
+                    "GIT_DIR=../x/.git git push",
+                    "export GIT_WORK_TREE=../x; git push origin feat/a", "HOME=/tmp git push",
+                    "git push origin feat/a & git push",
+                    "git push --recurse-submodules=on-demand origin feat/a"):
+            self.assertEqual(self.bash(cmd), "ask", cmd)
+        sh(self.root, "git", "config", "remote.origin.push", "refs/heads/*:refs/heads/main")
+        self.assertEqual(self.bash("git push"), "ask")
+        self.assertEqual(self.bash("git push origin feat/a"), "allow")
+        sh(self.root, "git", "config", "--unset", "remote.origin.push")
+        sh(self.root, "git", "config", "push.default", "matching")
+        self.assertEqual(self.bash("git push"), "ask")
+        self.assertEqual(self.bash("git push origin feat/a"), "allow")
+        # Protected branches come from the config; a deny decision denies them.
+        self.write("sdlc.config.json", json.dumps({"verify": [], "protected_branches": ["feat/*"],
+                                                   "gated_command_decision": "deny"}))
+        self.assertEqual(self.bash("git push origin feat/a"), "deny")
+        self.assertEqual(self.bash("git push origin main"), "allow")
+
+    def test_push_on_a_protected_branch_asks(self):
+        branch = subprocess.run(["git", "branch", "--show-current"], cwd=self.root,
+                                capture_output=True, text=True).stdout.strip()
+        self.assertIn(branch, ("main", "master"))
+        for cmd in ("git push", "git push -u origin HEAD", "git push origin @", "git push origin head"):
+            self.assertEqual(self.bash(cmd), "ask", cmd)
+
+    def plan_with_files(self, files):
+        self.write("docs/sdlc/feat-a/plan.md", "# Plan\n\n## Files affected\n%s\n## Work sequence\n"
+                   "1. [ ] `src/not-a-file-entry.js` in a step\n" % files)
+        self.prompt("sdlc approve plan")
+
+    def pre_edit_context(self, rel):
+        out = self.hook("pre-edit", tool_name="Edit", tool_input={"file_path": self.path(rel)})
+        spec = out.get("hookSpecificOutput", {})
+        return spec.get("permissionDecision", "allow"), spec.get("additionalContext")
+
+    def test_edit_outside_the_plan_gets_a_note(self):
+        self.to_build()
+        self.plan_with_files("| File | Change | Why |\n|------|--------|-----|\n"
+                             "| `src/app.js` | modify | x |\n| src/lib/ | create | y |\n"
+                             "| tests/*.test.js (new) | create | z |\n")
+        for rel in ("src/app.js", "src/lib/util.js", "tests/app.test.js", "docs/notes.md"):
+            self.assertEqual(self.pre_edit_context(rel), ("allow", None), rel)
+        decision, note = self.pre_edit_context("src/other.js")
+        self.assertEqual(decision, "allow")
+        self.assertIn("src/other.js is not in *Files affected*", note)
+        self.assertIn("sdlc approve plan", note)
+        # Once per file and session; the step text is not a Files affected entry.
+        self.assertEqual(self.pre_edit_context("src/other.js"), ("allow", None))
+        self.assertIsNotNone(self.pre_edit_context("src/not-a-file-entry.js")[1])
+        with open(self.path(".sdlc/audit.log")) as f:
+            self.assertIn("off-plan", f.read())
+
+    def test_plan_without_files_or_fasttrack_gets_no_note(self):
+        self.to_build()
+        self.plan_with_files("- `src/app.js`: the entry point\n")
+        self.assertEqual(self.pre_edit_context("src/app.js"), ("allow", None))
+        self.write("docs/sdlc/feat-a/plan.md", "# plan without the section\n")
+        self.prompt("sdlc approve plan")
+        self.assertEqual(self.pre_edit_context("src/other.js"), ("allow", None))
+        self.plan_with_files("| `src/app.js` | modify | x |\n")
+        self.prompt("sdlc trivial small fix")
+        self.assertEqual(self.pre_edit_context("src/other.js"), ("allow", None))
+
+    def raw_hook(self, name, **payload):
+        data = {"session_id": SID, "cwd": self.root}
+        data.update(payload)
+        r = subprocess.run([sys.executable, SCRIPT, "hook", name], input=json.dumps(data),
+                           capture_output=True, text=True, cwd=self.root,
+                           env=dict(os.environ, CLAUDE_PROJECT_DIR=self.root))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout) if r.stdout.strip() else {}
+
+    def test_gates_fail_closed_on_a_hook_error(self):
+        self.to_build()
+        # Malformed input crashes the handler: the gates deny, and the person sees why.
+        for name, tool_input in (("pre-edit", {"file_path": 123}), ("pre-bash", {"command": ["git", "push"]})):
+            out = self.raw_hook(name, tool_name="X", tool_input=tool_input)
+            self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny", name)
+            self.assertIn("failed closed", out["systemMessage"])
+        with open(self.path(".sdlc/audit.log")) as f:
+            self.assertEqual(sum(json.loads(line)["event"] == "hook-error" for line in f), 2)
+        # Hooks that gate nothing are skipped, with a note.
+        out = self.raw_hook("prompt", prompt=123)
+        self.assertNotIn("hookSpecificOutput", out)
+        self.assertIn("skipped", out["systemMessage"])
+        # The person can let calls through while the bug is fixed.
+        self.write("sdlc.config.json", json.dumps({"verify": [], "on_hook_error": "allow"}))
+        out = self.raw_hook("pre-edit", tool_name="X", tool_input={"file_path": 123})
+        self.assertNotIn("hookSpecificOutput", out)
+        self.assertIn("skipped", out["systemMessage"])
 
     def test_nested_session_cannot_send_user_commands(self):
         for cmd in ("claude -p \"sdlc approve plan\"",
@@ -423,6 +540,13 @@ class HookTest(unittest.TestCase):
                     "echo \"$(git push)\"",
                     "cat > notes.md <<EOF\n`git push`\nEOF"):
             self.assertEqual(self.bash(cmd), "ask", cmd)
+
+    def test_status_command_needs_no_turn(self):
+        self.cli("new", "feat-a")
+        out = self.hook("prompt", prompt="sdlc status")
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("Feature `feat-a`", out["reason"])
+        self.assertNotIn("hookSpecificOutput", out)
 
     def test_fasttrack_is_session_scoped(self):
         self.assertIn("fast-track", self.prompt("sdlc trivial fix typo"))
@@ -492,7 +616,7 @@ class HookTest(unittest.TestCase):
         # hooks/ui.tsx reads these keys; types/index.d.ts declares them (SdlcState, StageInfo)
         self.assertEqual(set(state), {"enabled", "root", "active", "stage", "stage_state", "stage_label",
                                       "next_skill", "code_gate", "artifact", "stages", "features",
-                                      "tests_locked", "fasttrack", "verify", "done"})
+                                      "tests_locked", "fasttrack", "verify", "review", "pr", "done"})
         self.assertEqual(set(state["stages"]["intent"]), {"state", "path", "sha256", "approved_sha256",
                                                           "by", "at", "reason"})
         self.assertEqual(state["artifact"], "docs/sdlc/feat-a/intent.md")
@@ -506,6 +630,63 @@ class HookTest(unittest.TestCase):
         self.assertTrue(state["verify"]["last"]["ok"])
         os.remove(self.path("sdlc.config.json"))
         self.assertEqual(json.loads(self.cli("state")[1]), {"enabled": False})
+
+    def review(self, text, agent="sdlc:sdlc-reviewer"):
+        self.hook("subagent-stop", agent_type=agent, last_assistant_message=text)
+        return json.loads(self.cli("state", "--session", SID)[1])["review"]
+
+    def test_review_verdict_follows_the_change(self):
+        sh(self.root, "git", "checkout", "-qb", "feat/a")
+        self.to_build()
+        self.write("src/app.js", "console.log(2)\n")
+        self.assertIsNone(self.review("READY FOR HUMAN REVIEW", agent="Explore"))
+        self.assertIsNone(self.review("no verdict line"))
+        self.assertEqual(self.review("[Major] src/app.js:1 - x\nCHANGES REQUIRED")["verdict"], "changes")
+        # A line that names both verdicts reads as changes required.
+        self.assertEqual(self.review("Verdict: CHANGES REQUIRED, not READY FOR HUMAN REVIEW")["verdict"],
+                         "changes")
+        review = self.review("AC coverage ...\nREADY FOR HUMAN REVIEW")
+        self.assertEqual((review["verdict"], review["current"]), ("ready", True))
+        # Committing on the feature branch keeps the review; a docs change does too.
+        sh(self.root, "git", "add", "-A")
+        sh(self.root, "git", "commit", "-qm", "work")
+        self.write("docs/notes.md", "notes\n")
+        self.assertTrue(json.loads(self.cli("state")[1])["review"]["current"])
+        # Any code change after the review makes it stale.
+        self.write("src/app.js", "console.log(3)\n")
+        self.assertFalse(json.loads(self.cli("state")[1])["review"]["current"])
+
+    def test_review_from_subagent_handback(self):
+        self.to_build()
+        self.hook("post-tool", tool_name="SubagentHandback", agent_type="sdlc:sdlc-reviewer",
+                  tool_input={"message": "READY FOR HUMAN REVIEW"}, tool_response={})
+        self.assertEqual(json.loads(self.cli("state")[1])["review"]["verdict"], "ready")
+
+    def test_pr_recorded_from_create_only(self):
+        self.to_build()
+        pr = lambda: json.loads(self.cli("state")[1])["pr"]
+        self.hook("post-tool", tool_name="Bash", tool_input={"command": "gh pr view 7"},
+                  tool_response={"stdout": "https://github.com/o/r/pull/7\n"})
+        self.hook("post-tool", tool_name="mcp__GitLab__get_merge_request", tool_input={},
+                  tool_response={"web_url": "https://gitlab.example.com/g/r/-/merge_requests/3"})
+        self.assertIsNone(pr())
+        self.hook("post-tool", tool_name="Bash", tool_input={"command": "git push -u origin HEAD && gh pr create --fill"},
+                  tool_response={"stdout": "https://github.com/o/r/pull/12\n", "stderr": ""})
+        self.assertEqual(pr()["url"], "https://github.com/o/r/pull/12")
+        self.hook("post-tool", tool_name="mcp__GitLab__save_merge_request", tool_input={},
+                  tool_response=[{"type": "text", "text": "{\"web_url\":\"https://gitlab.example.com/g/r/-/merge_requests/4\"}"}])
+        self.assertEqual(pr()["url"], "https://gitlab.example.com/g/r/-/merge_requests/4")
+
+    def test_exit_plan_mode_points_to_plan_md(self):
+        self.cli("new", "feat-a")
+        self.prompt("sdlc approve intent")
+        self.prompt("sdlc skip spec small")
+        out = self.hook("post-tool", tool_name="ExitPlanMode", tool_input={"plan": "# Plan"},
+                        tool_response={"plan": "# Plan", "filePath": "/tmp/p.md"})
+        context = out["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("docs/sdlc/feat-a/plan.md", context)
+        self.assertIn("sdlc approve plan", context)
+        self.assertEqual(self.edit("src/app.js"), "deny")
 
     def test_audit_log(self):
         self.edit("src/app.js")

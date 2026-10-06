@@ -7,16 +7,22 @@ description: SDLC stage 5 (Deploy) - layered review and PR - independent agent r
 
 Agents review mechanics, humans review intent and risk.
 
+Invoked with `pr` (the SDLC bar's *Create PR*, offered once a review of the current code
+passed): check the pre-flight, then go straight to step 4.
+
 1. **Pre-flight.** Verification from **sdlc:verify** has passed in this session and
    `git status` shows only intended changes. Artifacts in `docs/sdlc/<slug>/` are committed.
 2. **Independent agent review.** Launch the `sdlc-reviewer` subagent (fresh context, no
    bias from writing the code) with the feature slug and the base branch. If the
    `/code-review` skill is available, run it too. Review categories and severity come
-   from `REVIEW.md`.
+   from `REVIEW.md`. The plugin records the reviewer's verdict line with the code it read:
+   `READY FOR HUMAN REVIEW` makes the SDLC bar offer *Create PR*, `CHANGES REQUIRED` makes
+   it offer *Review again*. Any later code change makes the verdict stale.
 3. **Triage findings.** Fix every Blocker and Major (or justify it in the PR), re-run
    verification, repeat the review once. Do not argue with a finding without evidence.
-4. **Open the PR.** Push (the deploy gate asks the user to confirm) and open a PR whose
-   description contains:
+4. **Open the PR.** Push (the deploy gate asks the user to confirm) and open the PR with
+   `gh pr create` (GitHub), `glab mr create` (GitLab) or the forge's MCP tool; the plugin
+   records the PR URL from its output. The description contains:
    - links to `intent.md`, `spec.md`, `plan.md`;
    - summary of changes and any deviations from the plan;
    - AC → test mapping and pasted verification output;
@@ -24,4 +30,5 @@ Agents review mechanics, humans review intent and risk.
 5. **Human gate.** Merging requires a human approval via branch protection. Address
    reviewer comments (including `@claude` mentions) with new commits, not force-pushes.
 6. **Close the loop.** Recurring review findings become rules in `CLAUDE.md` or a skill.
-   After merge the user types `sdlc done` to close the feature.
+   Once the PR exists, the user closes the feature: *Close feature* in the SDLC bar, or
+   `sdlc done`.

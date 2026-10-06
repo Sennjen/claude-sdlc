@@ -128,6 +128,13 @@ function announce($: EngineInterface, prev: SdlcState | null, next: SdlcState) {
       timeoutMs: last.ok ? 4000 : 8000,
     })
   }
+  if (prev.active !== next.active) return
+  const review = next.review
+  if (review && review.at !== prev.review?.at) {
+    $.ui.toast(review.verdict === 'ready' ? 'SDLC review passed: the PR is next'
+      : 'SDLC review: changes required', { timeoutMs: 8000 })
+  }
+  if (next.pr && next.pr.url !== prev.pr?.url) $.ui.toast(`PR created: ${next.pr.url}`, { timeoutMs: 8000 })
 }
 
 async function refresh($: EngineInterface): Promise<SdlcState | null> {
@@ -140,7 +147,8 @@ async function refresh($: EngineInterface): Promise<SdlcState | null> {
       const prev = await read($, stateAtom)
       announce($, prev, next)
       // A band hidden with its × comes back when there is something new to do.
-      const where = (s: SdlcState | null) => (s && s.enabled ? `${s.active}/${s.stage}/${s.stage_state}` : '')
+      const where = (s: SdlcState | null) =>
+        s && s.enabled ? `${s.active}/${s.stage}/${s.stage_state}/${reviewState(s)}/${!!s.pr}` : ''
       if (prev && where(prev) !== where(next)) await update($, hiddenAtom, () => false)
       // A request ends once the tests are unlocked, by the button or a typed command.
       if (!next.enabled || !next.tests_locked) await update($, unlockAtom, () => null)
@@ -225,10 +233,11 @@ async function fillCommand($: EngineInterface, command: string, hint?: string) {
 
 /** Runs a slash command as if the person typed it and pressed Enter (queued while a turn
  *  runs); where it cannot run, puts it in the prompt instead. */
-async function runCommand($: EngineInterface, command: string) {
+async function runCommand($: EngineInterface, command: string, args = '') {
   await update($, detailsAtom, () => false)
-  $.ui.toast(`Running ${command}`)
-  void $.command.run({ command: command.replace(/^\//, '') }).catch(() => fillCommand($, command))
+  const typed = args ? `${command} ${args}` : command
+  $.ui.toast(`Running ${typed}`)
+  void $.command.run({ command: command.replace(/^\//, ''), args }).catch(() => fillCommand($, typed))
 }
 
 /** Shows one of the desktop's own panes (Files, Diff); false where there is none. */
@@ -258,14 +267,19 @@ async function showChanges($: EngineInterface) {
 /** Opens a file in the desktop's Files pane; where there is none, in the host's default app. */
 async function openFile($: EngineInterface, path: string) {
   if (await showPane($, { pane: 'file', path })) return
-  for (const argv of [['open', path], ['xdg-open', path]]) {
+  await openUrl($, path)
+}
+
+/** Opens a path or URL in the host's default app. */
+async function openUrl($: EngineInterface, target: string) {
+  for (const argv of [['open', target], ['xdg-open', target]]) {
     try {
       if ((await $.process.run(argv, { timeoutMs: 10_000 })).exitCode === 0) return
     } catch {
       // try the next opener
     }
   }
-  $.ui.toast(`Cannot open ${path}`, { timeoutMs: 8000 })
+  $.ui.toast(`Cannot open ${target}`, { timeoutMs: 8000 })
 }
 
 /** Approves the artifact as it was on screen: if the file changed since, nothing is approved. */
@@ -287,6 +301,16 @@ async function approve($: EngineInterface, shown: Approval) {
   }
 }
 
+/** The review of the code as it is now: `ready`, `changes`, or `none` (never run, or the
+ *  code changed since). */
+function reviewState(s: On): 'ready' | 'changes' | 'none' {
+  return s.review?.current ? s.review.verdict : 'none'
+}
+
+/** Whether every plan step is done; a plan without numbered steps counts as done when
+ *  verify passes. */
+const isBuilt = (s: On, steps: Steps) => (steps.total === 0 ? !!s.verify.last?.ok : steps.done >= steps.total)
+
 /** The one action that moves the feature on from where it stands. */
 function nextAction($: EngineInterface, s: On, steps: Steps = NO_STEPS): Action | null {
   if (!s.active) {
@@ -295,17 +319,30 @@ function nextAction($: EngineInterface, s: On, steps: Steps = NO_STEPS): Action 
   }
   if (s.stage === 'build') {
     const build = (label: string): Action => ({ key: 'build', label, run: () => runCommand($, '/sdlc:build') })
-    // A finished build is closed from the band; Review stays in the details.
-    const close: Action = { key: 'done', label: 'Close feature', run: () => press($, 'sdlc done') }
-    // A plan without numbered steps: fall back to the verify result.
-    if (steps.total === 0) return s.verify.last?.ok ? close : build('Build')
-    if (steps.done === 0) return build('Start building')
-    return steps.done < steps.total ? build('Continue building') : close
+    if (!isBuilt(s, steps)) {
+      if (steps.total === 0) return build('Build')
+      return build(steps.done === 0 ? 'Start building' : 'Continue building')
+    }
+    // A finished build goes through review, then the PR; the feature closes once the PR exists.
+    if (s.pr) return { key: 'done', label: 'Close feature', run: () => press($, 'sdlc done') }
+    const review = reviewState(s)
+    if (review === 'ready') return { key: 'pr', label: 'Create PR', run: () => runCommand($, '/sdlc:review', 'pr') }
+    return {
+      key: 'review',
+      label: review === 'changes' ? 'Review again' : 'Review',
+      run: () => runCommand($, '/sdlc:review'),
+    }
   }
   const stage = s.stage
   const info = stage ? s.stages[stage] : undefined
   if (!stage || !info) return null
   if (info.state === 'missing') {
+    // The plan is drafted in plan mode, read-only until the person accepts it; plan.md is
+    // written after that, and only `sdlc approve plan` opens the code gate.
+    if (stage === 'plan') {
+      const task = `Write plan.md for feature \`${s.active}\` with the sdlc:plan skill.`
+      return { key: 'write', label: 'Write plan', run: () => runCommand($, '/plan', task) }
+    }
     return { key: 'write', label: `Write ${stage}`, run: () => runCommand($, `/sdlc:${stage}`) }
   }
   if ((info.state === 'draft' || info.state === 'stale') && info.sha256) {
@@ -470,6 +507,10 @@ const TRACK = 'rgba(128,128,128,0.28)'
 /** Where the active feature stands, in words: "Spec · waiting for approval". */
 function whereText(s: On, steps: Steps = NO_STEPS): string {
   if (!s.active) return s.fasttrack ? 'Fast-track on' : 'No active feature'
+  if (s.stage === 'build' && isBuilt(s, steps)) {
+    if (s.pr) return 'Build · PR created'
+    if (reviewState(s) === 'ready') return 'Build · review passed'
+  }
   if (s.stage === 'build' && steps.total > 0) return `Build · ${steps.done}/${steps.total} steps`
   if (s.stage === 'build') return `Build · ${s.verify.last?.ok ? 'verify passed' : 'in progress'}`
   const doing = s.stage_state === 'missing' ? 'not started'
@@ -483,7 +524,9 @@ function Summary(els: Els, $: EngineInterface, s: On, steps: Steps) {
   const { Box, Text } = els
   // One or two words: a longer note pushes the band's button onto a second line, and the
   // reason for an unlock request is already in the chat.
-  const warn = s.verify.last && !s.verify.last.ok ? 'verify failed' : s.tests_locked ? 'tests locked' : ''
+  const warn = s.verify.last && !s.verify.last.ok ? 'verify failed'
+    : s.stage === 'build' && !s.pr && reviewState(s) === 'changes' ? 'changes required'
+    : s.tests_locked ? 'tests locked' : ''
   const info = s.stage && s.stage !== 'build' ? s.stages[s.stage] : undefined
   const isFile = !!info && (info.state === 'draft' || info.state === 'stale')
   const where = whereText(s, steps)
@@ -745,6 +788,19 @@ function Details(
     { key: 'verify', label: 'Verify', labelText: 'Verify',
       value: last && !last.ok ? <Text color="red">{verify}</Text> : verify, valueText: verify },
   ]
+  if (s.stage === 'build') {
+    const review = reviewState(s)
+    const reviewText = review === 'ready' ? 'Passed' : review === 'changes' ? 'Changes required'
+      : s.review ? 'Out of date' : 'Not run'
+    status.push({ key: 'review', label: 'Review', labelText: 'Review',
+      value: review === 'changes' ? <Text color="red">{reviewText}</Text> : reviewText, valueText: reviewText })
+  }
+  if (s.pr) {
+    const url = s.pr.url
+    const prText = `#${url.split('/').pop() ?? ''}`
+    status.push({ key: 'pr', label: 'PR', labelText: 'PR', valueText: prText,
+      value: <els.Markdown key="pr-link" text={`[${prText}](${url})`} onLinkPress={() => void openUrl($, url)} /> })
+  }
   if (s.fasttrack) {
     status.push({ key: 'fasttrack', label: 'Fast-track', labelText: 'Fast-track', value: 'On', valueText: 'On' })
   }
@@ -765,14 +821,14 @@ function Details(
   const building = s.active && s.stage === 'build'
   // With numbered plan steps the build's progress decides; without, the verify result does.
   const started = steps.total === 0 || steps.done > 0
-  const finished = steps.total === 0 ? verified : steps.done >= steps.total
+  const finished = isBuilt(s, steps)
   if (building && started && !verified) {
     actions.push({ key: 'verify', label: 'Run verify', hotkey: 'v', run: () => runCommand($, '/sdlc:verify') })
   }
   if (building && started) {
     actions.push({ key: 'changes', label: 'Show changes', hotkey: 'd', run: () => showChanges($) })
   }
-  if (building && started && (steps.total > 0 || verified)) {
+  if (building && started && (steps.total > 0 || verified) && action?.key !== 'review') {
     actions.push({ key: 'review', label: 'Review', hotkey: 'r', run: () => runCommand($, '/sdlc:review') })
   }
   if (building && finished && action?.key !== 'done') {

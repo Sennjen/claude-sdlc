@@ -1,5 +1,5 @@
 {
-  "description": "AI-native SDLC gates: stage status in every prompt, code-edit gate, deploy gate, Definition of Done on stop; ui.tsx adds the SDLC band above the prompt and SDLC in the footer. Inert without sdlc.config.json.",
+  "description": "AI-native SDLC gates: stage status in every prompt, code-edit gate, deploy gate, Definition of Done on stop, review and PR tracking for the band; ui.tsx adds the SDLC band above the prompt and SDLC in the footer. Inert without sdlc.config.json.",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -27,6 +27,27 @@
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",
         "hooks": [
           { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py", "hook", "post-edit"], "timeout": 15 }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "if": "Bash(gh pr create*)", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py", "hook", "post-tool"], "timeout": 15 },
+          { "type": "command", "if": "Bash(glab mr create*)", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py", "hook", "post-tool"], "timeout": 15 }
+        ]
+      },
+      {
+        "matcher": "ExitPlanMode|SubagentHandback|^mcp__.*(create|save|open)_?(pull|merge)_?request",
+        "hooks": [
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py", "hook", "post-tool"], "timeout": 15 }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "sdlc-reviewer$",
+        "hooks": [
+          { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py", "hook", "subagent-stop"], "timeout": 30 }
         ]
       }
     ],

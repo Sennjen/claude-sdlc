@@ -21,6 +21,13 @@ export type FeatureInfo = {
 
 export type VerifyRun = { ok: boolean; at: string | null; report: string | null }
 
+/** The last sdlc-reviewer verdict for the active feature; `current` while the code it read
+ *  is unchanged. */
+export type ReviewInfo = { verdict: 'ready' | 'changes'; at: string | null; current: boolean }
+
+/** The PR (or MR) the agent opened for the active feature. */
+export type PrInfo = { url: string; at: string | null }
+
 /** What `sdlc.py cli state --session <id>` prints. */
 export type SdlcState =
   | { enabled: false }
@@ -39,6 +46,8 @@ export type SdlcState =
       tests_locked: boolean
       fasttrack: { by: string; at: string; reason: string } | null
       verify: { commands: string[]; last: VerifyRun | null }
+      review: ReviewInfo | null
+      pr: PrInfo | null
       done?: boolean
     }
 

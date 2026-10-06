@@ -5,6 +5,8 @@
   "ungated_paths": ["docs/**", "**/*.md", "**/*.mdx", ".gitignore"],
   "protected_paths": ["sdlc.config.json", "**/.claude/settings*.json", "**/.claude/hooks/**", "**/.claude/agents/**", "**/.claude/skills/**", "**/.claude/commands/**", "**/.claude/rules/**", "**/.claude/output-styles/**", ".mcp.json", "**/CLAUDE.md", "**/CLAUDE.local.md", "REVIEW.md"],
   "test_paths": ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*", "**/*_test.*", "**/test_*.py", "**/*Test.*", "**/*Tests.*"],
-  "gated_commands": ["\\bgit\\s+push\\b", "\\bgh\\s+pr\\s+merge\\b", "\\bnpm\\s+publish\\b", "\\bterraform\\s+apply\\b", "\\bkubectl\\s+(apply|delete|rollout)\\b", "\\bhelm\\s+(install|upgrade)\\b", "\\bvercel\\b.*--prod\\b", "\\bfirebase\\s+deploy\\b", "\\beas\\s+(submit|update)\\b", "\\bfastlane\\b"],
-  "gated_command_decision": "ask"
+  "gated_commands": ["\\bgit(?:\\s+-[Cc]\\s+\\S+|\\s+--?[\\w.-]+(?:=\\S+)?)*\\s+push\\b", "\\bgh\\s+pr\\s+merge\\b", "\\bnpm\\s+publish\\b", "\\bterraform\\s+apply\\b", "\\bkubectl\\s+(apply|delete|rollout)\\b", "\\bhelm\\s+(install|upgrade)\\b", "\\bvercel\\b.*--prod\\b", "\\bfirebase\\s+deploy\\b", "\\beas\\s+(submit|update)\\b", "\\bfastlane\\b"],
+  "gated_command_decision": "ask",
+  "protected_branches": ["main", "master", "release/*"],
+  "on_hook_error": "deny"
 }

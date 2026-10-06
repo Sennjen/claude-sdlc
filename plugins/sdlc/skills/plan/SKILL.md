@@ -8,6 +8,18 @@ description: SDLC stage 3a (Build planning) - produce docs/sdlc/<feature>/plan.m
 Design review happens here, while changing course is still a matter of editing a
 document. Code edits stay blocked by hooks until the user approves this plan.
 
+**Plan mode.** The playbook drafts the plan in Claude Code plan mode, where you can read the
+codebase but not change it. The SDLC bar's *Write plan* starts this skill there (`/plan`).
+If the session is in plan mode:
+- do steps 1 and 2 as below, then present the plan with ExitPlanMode instead of writing
+  `plan.md` (plan mode allows no file writes). Use the template's sections, so the plan
+  the user accepts is the one that lands in `plan.md`;
+- after the user accepts it, write it to `docs/sdlc/<slug>/plan.md` unchanged, then go to
+  step 4. Accepting a plan in plan mode is **not** the SDLC approval: the code gate stays
+  closed until the user types `sdlc approve plan` (or presses *Approve plan*).
+
+Outside plan mode, follow the same steps and write `plan.md` directly.
+
 1. **Read** `spec.md` (or `intent.md` if the spec was skipped), `CLAUDE.md`, and the code
    you will touch. Explore enough to name concrete files and functions.
 2. **Interview the engineer.** Ask about the choices that matter: approach alternatives,
