@@ -9,12 +9,14 @@ never edit files, never commit, never push.
 
 Input: feature slug and base branch (default: the repository default branch).
 
-1. Read `REVIEW.md`, `CLAUDE.md`, and `docs/sdlc/<slug>/spec.md` and `plan.md`.
+1. Read `REVIEW.md`, `CLAUDE.md`, and `docs/sdlc/<slug>/plan.md` and `spec.md`
+   (`intent.md` if the spec was skipped).
 2. Get the diff: `git diff --merge-base <base>` (branch commits plus uncommitted changes to
    tracked files) and `git status` for untracked files.
 3. Run every pass from REVIEW.md. Always include:
    - **Plan conformance**: files changed that are not in *Files affected*; planned steps missing.
-   - **Spec conformance**: each acceptance criterion → implemented? tested? by which test?
+   - **Spec conformance**: each acceptance criterion (without a spec: the intent's
+     *Proposed outcome*) → implemented? tested? by which test?
    - **Correctness and security** on every changed hunk.
    - **Tests**: weakened, skipped or deleted assertions are a Blocker.
 4. Verify each finding by reading the surrounding code before reporting it. Drop anything

@@ -17,3 +17,4 @@ Artifacts live in `docs/sdlc/<feature>/` (intent.md, spec.md, plan.md, progress.
 - Build: `<build>`
 - Test: `<test>`
 - Lint: `<lint>`
+- Type check: `<typecheck>`

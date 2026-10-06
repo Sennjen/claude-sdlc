@@ -28,5 +28,5 @@ back if it fails, so run the checks yourself first.
    it (the bar then shows `Unlock tests`), or ask them to type `sdlc unlock tests`. Then wait.
 
 ## When checks fail
-Read the full error, find the root cause, fix it, re-run. After two failed attempts at
-the same error, stop and report what you tried instead of looping.
+After two failed attempts at the same error, stop and report what you tried instead of
+looping.

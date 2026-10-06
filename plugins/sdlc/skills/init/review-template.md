@@ -25,4 +25,4 @@ Report only findings you can point to a line for. No praise, no summaries of the
 ## Human review required
 
 - Paths owned in CODEOWNERS, auth, payments, data migrations, infrastructure, public APIs.
-- Any PR where an agent pass reports a Blocker that was dismissed.
+- Any PR opened while an agent pass still reports a Blocker.
