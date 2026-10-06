@@ -603,6 +603,25 @@ class HookTest(unittest.TestCase):
         self.assertNotIn("decision", out)
         self.assertIn("still failing", out.get("systemMessage", ""))
 
+    def test_stop_rechecks_after_committed_fix(self):
+        # A fix committed before the next stop leaves no code diff; the stop hook must still
+        # record the passing run, or the UI keeps showing the old failure.
+        self.prompt("start")
+        self.to_build()
+        self.write("src/app.js", "console.log(4)\n")
+        self.write("FAIL", "x")
+        self.assertEqual(self.hook("stop").get("decision"), "block")
+        sh(self.root, "git", "add", "-A")
+        sh(self.root, "git", "commit", "-qm", "wip")
+        self.assertEqual(self.hook("stop").get("decision"), "block")  # the commit still fails
+        sh(self.root, "git", "rm", "-q", "FAIL")
+        sh(self.root, "git", "commit", "-qm", "fix")
+        out = self.hook("stop")
+        self.assertIn("passed", out.get("systemMessage", ""))
+        self.assertEqual(self.hook("stop"), {})
+        state = json.loads(self.cli("state", "--session", SID)[1])
+        self.assertTrue(state["verify"]["last"]["ok"])
+
     def test_state_json(self):
         rc, out = self.cli("state", "--session", SID)
         self.assertEqual(rc, 0)

@@ -1440,7 +1440,14 @@ def hook_stop(data, p):
     else:
         changed = fp != "clean" and fp != sess.get("baseline_fp") and fp != sess.get("last_pass_fp")
     if not changed:
-        sys.exit(0)
+        if "last_fail_fp" not in sess:
+            sys.exit(0)
+        # The last run failed and the fix is already committed (or reverted): check again, or
+        # the old failure stays the session's last result. A clean tree is keyed by its commit
+        # so the retry limit counts per commit.
+        if fp == "clean":
+            rc, head = git(p.root, "rev-parse", "HEAD")
+            fp = "clean@" + head.decode().strip() if rc == 0 else fp
     if fp is not None and fp == sess.get("last_fail_fp") and sess.get("fail_count", 0) >= MAX_STOP_RETRIES:
         emit({"systemMessage": "SDLC: verification is still failing after %d attempts; stopping so "
                                "a human can look. Do not treat this task as done." % MAX_STOP_RETRIES})
