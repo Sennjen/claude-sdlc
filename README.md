@@ -110,34 +110,38 @@ The tests stay locked until the person unlocks them. Claude can only ask: the pl
 `request_test_unlock` tool (`mcp__sdlc__request_test_unlock`), which turns the band's action into
 `Unlock tests`. The tool itself unlocks nothing.
 
-The UI is a function-hooks module (`hooks/ui.tsx`) and needs Claude Code 2.1.284 or newer.
-Older versions skip the module and log that it did not load; the gates keep working because
-they are command hooks. `claude -p` runs without the UI unless `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`.
+The UI is a Claude Mod: a function-hooks module (`hooks/ui.tsx`). Mods are on by default in
+Claude Code 2.1.287 or newer in the terminal, and 2.1.286 or newer in the Code tab of the
+Desktop app. Tested with 2.1.291. Older versions skip the module and log that it did not load;
+the gates keep working because they are command hooks. In `claude -p` the module runs but
+draws nothing, so there is no band.
 
 The agent has a safe CLI on its PATH: `sdlc status | state [--session ID] | features | new <slug> [type] | lock-tests`. `state` prints the status as JSON for UIs.
 
 ## Install
 
-Requirements: `python3` (3.9+) and `git`.
+Requirements: Claude Code 2.1.287+ (for the UI; the gates work on older versions),
+`python3` (3.9+) and `git`.
 
 In an interactive `claude` terminal:
 
 ```
-/plugin marketplace add /path/to/claude-sdlc
+/plugin marketplace add Sennjen/claude-sdlc
 /plugin install sdlc@ai-sdlc
 ```
 
 or from a shell:
 
 ```bash
-claude plugin marketplace add /path/to/claude-sdlc
+claude plugin marketplace add Sennjen/claude-sdlc
 claude plugin install sdlc@ai-sdlc
 ```
 
 Then, inside a project, run `/sdlc:init`. It detects the verify commands, adds the
 CLAUDE.md section and `REVIEW.md`, and writes `sdlc.config.json` last. Commit the result.
 
-To try the plugin without installing it: `claude --plugin-dir /path/to/claude-sdlc/plugins/sdlc`.
+To try the plugin without installing it, clone the repository and run
+`claude --plugin-dir ./claude-sdlc/plugins/sdlc`.
 
 ### Enforce it across an organization
 
@@ -272,3 +276,7 @@ The second command runs one case once, for iterating on a skill. `--scaffold` ru
 
 `tsc` reads the engine's declarations from `.claude-plugin/types/` (gitignored). Claude Code
 writes them there when it loads the plugin from this folder (`claude --plugin-dir plugins/sdlc`).
+
+## License
+
+[MIT](LICENSE)
