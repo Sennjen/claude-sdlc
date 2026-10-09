@@ -1,0 +1,504 @@
+{
+  "_meta": {
+    "source": "cursor-support spike, 2026-10-09",
+    "clients": {
+      "ide": "Cursor IDE 3.24.9",
+      "cli": "Cursor CLI 2026.10.01-e373342"
+    },
+    "placeholders": {
+      "/WORKSPACE": "workspace root",
+      "/HOME": "home directory"
+    }
+  },
+  "payloads": {
+    "ide/sessionStart": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "",
+      "model": "cursor-grok-4.6-medium",
+      "model_id": "grok-4.6",
+      "model_params": [
+        {
+          "id": "effort",
+          "value": "medium"
+        },
+        {
+          "id": "fast",
+          "value": "false"
+        }
+      ],
+      "is_background_agent": false,
+      "composer_mode": "agent",
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "sessionStart",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": null
+    },
+    "ide/beforeSubmitPrompt": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000002",
+      "model": "cursor-grok-4.6-medium",
+      "model_id": "grok-4.6",
+      "model_params": [
+        {
+          "id": "effort",
+          "value": "medium"
+        },
+        {
+          "id": "fast",
+          "value": "false"
+        }
+      ],
+      "composer_mode": "agent",
+      "prompt": "CTX_FLAT What prompt word, if any, was given to you in context for this message? Do not use tools.",
+      "attachments": [],
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "beforeSubmitPrompt",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": null
+    },
+    "ide/beforeSubmitPrompt-followup": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000003",
+      "model": "cursor-grok-4.6-medium",
+      "model_id": "grok-4.6",
+      "model_params": [
+        {
+          "id": "effort",
+          "value": "medium"
+        },
+        {
+          "id": "fast",
+          "value": "false"
+        }
+      ],
+      "composer_mode": "agent",
+      "prompt": "PROBE FOLLOWUP: create the file STOP_CONTINUED.txt containing ok, then stop.",
+      "attachments": [],
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "beforeSubmitPrompt",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
+    },
+    "ide/preToolUse-Write": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000004",
+      "model": "grok-4.6",
+      "tool_name": "Write",
+      "tool_input": {
+        "file_path": "/WORKSPACE/DENY_ASK.txt",
+        "content": "x\n"
+      },
+      "tool_use_id": "call-0\ncall-0",
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "preToolUse",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
+    },
+    "ide/preToolUse-Shell": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000005",
+      "model": "grok-4.6",
+      "tool_name": "Shell",
+      "tool_input": {
+        "command": "echo SHELL_ASK",
+        "cwd": "",
+        "timeout": 30000
+      },
+      "tool_use_id": "00000000-0000-0000-0000-000000000006",
+      "cwd": "",
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "preToolUse",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
+    },
+    "ide/beforeShellExecution": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000005",
+      "model": "grok-4.6",
+      "command": "echo SHELL_ASK",
+      "cwd": "",
+      "sandbox": false,
+      "tool_use_id": "00000000-0000-0000-0000-000000000006",
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "beforeShellExecution",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
+    },
+    "ide/postToolUse-Shell": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000005",
+      "model": "grok-4.6",
+      "tool_name": "Shell",
+      "tool_input": {
+        "command": "echo SHELL_ASK",
+        "cwd": "",
+        "timeout": 30000
+      },
+      "tool_output": "{\"output\":\"SHELL_ASK\\n\",\"exitCode\":0}",
+      "duration": 37978.123,
+      "tool_use_id": "00000000-0000-0000-0000-000000000006",
+      "cwd": "",
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "postToolUse",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
+    },
+    "ide/postToolUse-Write": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000004",
+      "model": "grok-4.6",
+      "tool_name": "Write",
+      "tool_input": {
+        "file_path": "/WORKSPACE/DENY_ASK.txt",
+        "content": "x\n"
+      },
+      "tool_output": "{\"file_path\":\"/WORKSPACE/DENY_ASK.txt\",\"success\":true}",
+      "duration": 11.709,
+      "tool_use_id": "call-0\ncall-0",
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "postToolUse",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
+    },
+    "ide/afterFileEdit": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000004",
+      "model": "grok-4.6",
+      "file_path": "/WORKSPACE/DENY_ASK.txt",
+      "edits": [
+        {
+          "old_string": "",
+          "new_string": "x\n"
+        }
+      ],
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "afterFileEdit",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
+    },
+    "ide/preToolUse-Task": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000007",
+      "model": "",
+      "tool_name": "Task",
+      "tool_input": {
+        "description": "Probe-a reviewer pass",
+        "prompt": "You are the probe-a-reviewer. Perform your review for this workspace and return your complete answer. Include any probe identity, session, or review word your instructions tell you to report. Do not summarize; give your full final response.",
+        "model": "inherit",
+        "subagent_type": "probe-a-reviewer"
+      },
+      "tool_use_id": "call-0\ncall-0",
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "preToolUse",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
+    },
+    "ide/subagentStart": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000001",
+      "model": "cursor-grok-4.6-medium",
+      "subagent_id": "call-0\ncall-0",
+      "subagent_type": "probe-a-reviewer",
+      "task": "You are the probe-a-reviewer. Perform your review for this workspace and return your complete answer. Include any probe identity, session, or review word your instructions tell you to report. Do not summarize; give your full final response.",
+      "parent_conversation_id": "00000000-0000-0000-0000-000000000001",
+      "tool_call_id": "call-0\ncall-0",
+      "subagent_model": "cursor-grok-4.6-medium",
+      "is_parallel_worker": false,
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "subagentStart",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
+    },
+    "ide/preToolUse-subagent-Read": {
+      "conversation_id": "00000000-0000-0000-0000-000000000008",
+      "generation_id": "00000000-0000-0000-0000-000000000009",
+      "model": "cursor-grok-4.6-medium",
+      "parent_tool_call_id": "call-0\ncall-0",
+      "tool_name": "Read",
+      "tool_input": {
+        "file_path": "/WORKSPACE/README.md"
+      },
+      "tool_use_id": "call-0\ncall-0",
+      "session_id": "00000000-0000-0000-0000-000000000008",
+      "hook_event_name": "preToolUse",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": null
+    },
+    "ide/subagentStop": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000001",
+      "model": "cursor-grok-4.6-medium",
+      "subagent_id": "call-0\ncall-0",
+      "subagent_type": "probe-a-reviewer",
+      "status": "completed",
+      "duration_ms": 23726,
+      "parent_conversation_id": "00000000-0000-0000-0000-000000000001",
+      "child_conversation_id": "00000000-0000-0000-0000-000000000008",
+      "message_count": 0,
+      "tool_call_count": 0,
+      "loop_count": 0,
+      "task": "You are the probe-a-reviewer. Perform your review for this workspace and return your complete answer. Include any probe identity, session, or review word your instructions tell you to report. Do not summarize; give your full final response.",
+      "description": "Probe-a reviewer pass",
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "subagentStop",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl",
+      "agent_transcript_path": null
+    },
+    "ide/stop": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000002",
+      "model": "cursor-grok-4.6-medium",
+      "model_id": "grok-4.6",
+      "model_params": [
+        {
+          "id": "effort",
+          "value": "medium"
+        },
+        {
+          "id": "fast",
+          "value": "false"
+        }
+      ],
+      "status": "completed",
+      "loop_count": 0,
+      "input_tokens": 15609,
+      "output_tokens": 120,
+      "cache_read_tokens": 4736,
+      "cache_write_tokens": 0,
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "stop",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
+    },
+    "ide/stop-loop1": {
+      "conversation_id": "00000000-0000-0000-0000-000000000001",
+      "generation_id": "00000000-0000-0000-0000-000000000003",
+      "model": "cursor-grok-4.6-medium",
+      "model_id": "grok-4.6",
+      "model_params": [
+        {
+          "id": "effort",
+          "value": "medium"
+        },
+        {
+          "id": "fast",
+          "value": "false"
+        }
+      ],
+      "status": "completed",
+      "loop_count": 1,
+      "input_tokens": 39319,
+      "output_tokens": 159,
+      "cache_read_tokens": 38912,
+      "cache_write_tokens": 0,
+      "session_id": "00000000-0000-0000-0000-000000000001",
+      "hook_event_name": "stop",
+      "cursor_version": "3.24.9",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
+    },
+    "cli/preToolUse-Write-strreplace": {
+      "conversation_id": "00000000-0000-0000-0000-00000000000a",
+      "generation_id": "00000000-0000-0000-0000-00000000000a",
+      "model": "default",
+      "tool_name": "Write",
+      "tool_input": {
+        "file_path": "/WORKSPACE/app/calc.py",
+        "content": "def add(a, b):\n    return a + b\n\n\ndef subtract(a, b):\n    return a - b\n"
+      },
+      "tool_use_id": "call-0\ncall-0",
+      "session_id": "00000000-0000-0000-0000-00000000000a",
+      "hook_event_name": "preToolUse",
+      "cursor_version": "2026.10.01-e373342",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000a/00000000-0000-0000-0000-00000000000a.jsonl"
+    },
+    "cli/preToolUse-Write-notebook": {
+      "conversation_id": "00000000-0000-0000-0000-00000000000a",
+      "generation_id": "00000000-0000-0000-0000-00000000000a",
+      "model": "default",
+      "tool_name": "Write",
+      "tool_input": {
+        "file_path": "/WORKSPACE/nb.ipynb",
+        "content": "{\n  \"cells\": [\n    {\n      \"cell_type\": \"code\",\n      \"metadata\": {},\n      \"source\": [\n        \"x = 2\"\n      ],\n      \"execution_count\": null,\n      \"outputs\": []\n    }\n  ],\n  \"metadata\": {},\n  \"nbformat\": 4,\n  \"nbformat_minor\": 5\n}"
+      },
+      "tool_use_id": "call-0\ncall-0",
+      "session_id": "00000000-0000-0000-0000-00000000000a",
+      "hook_event_name": "preToolUse",
+      "cursor_version": "2026.10.01-e373342",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000a/00000000-0000-0000-0000-00000000000a.jsonl"
+    },
+    "cli/preToolUse-Delete": {
+      "conversation_id": "00000000-0000-0000-0000-00000000000a",
+      "generation_id": "00000000-0000-0000-0000-00000000000a",
+      "model": "default",
+      "tool_name": "Delete",
+      "tool_input": {
+        "file_path": "/WORKSPACE/sub/existing.txt"
+      },
+      "tool_use_id": "call-0\ncall-0",
+      "session_id": "00000000-0000-0000-0000-00000000000a",
+      "hook_event_name": "preToolUse",
+      "cursor_version": "2026.10.01-e373342",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000a/00000000-0000-0000-0000-00000000000a.jsonl"
+    },
+    "cli/preToolUse-Shell-cwd": {
+      "conversation_id": "00000000-0000-0000-0000-00000000000b",
+      "generation_id": "00000000-0000-0000-0000-00000000000b",
+      "model": "default",
+      "tool_name": "Shell",
+      "tool_input": {
+        "command": "pwd",
+        "cwd": "/WORKSPACE/sub",
+        "timeout": 30000
+      },
+      "tool_use_id": "00000000-0000-0000-0000-00000000000c",
+      "cwd": "/WORKSPACE/sub",
+      "session_id": "00000000-0000-0000-0000-00000000000b",
+      "hook_event_name": "preToolUse",
+      "cursor_version": "2026.10.01-e373342",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000b/00000000-0000-0000-0000-00000000000b.jsonl"
+    },
+    "cli/beforeShellExecution-cwd": {
+      "conversation_id": "00000000-0000-0000-0000-00000000000b",
+      "generation_id": "00000000-0000-0000-0000-00000000000b",
+      "model": "default",
+      "command": "pwd",
+      "cwd": "/WORKSPACE/sub",
+      "sandbox": false,
+      "session_id": "00000000-0000-0000-0000-00000000000b",
+      "hook_event_name": "beforeShellExecution",
+      "cursor_version": "2026.10.01-e373342",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000b/00000000-0000-0000-0000-00000000000b.jsonl"
+    },
+    "cli/postToolUseFailure-Shell-exit": {
+      "conversation_id": "00000000-0000-0000-0000-00000000000b",
+      "generation_id": "00000000-0000-0000-0000-00000000000b",
+      "model": "default",
+      "tool_name": "Shell",
+      "tool_input": {
+        "command": "sh -c \"echo https://github.com/o/r/pull/1; exit 3\"",
+        "cwd": "",
+        "timeout": 30000
+      },
+      "error_message": "https://github.com/o/r/pull/1",
+      "failure_type": "error",
+      "duration": 1460.368,
+      "tool_use_id": "00000000-0000-0000-0000-00000000000d",
+      "is_interrupt": false,
+      "cwd": "",
+      "session_id": "00000000-0000-0000-0000-00000000000b",
+      "hook_event_name": "postToolUseFailure",
+      "cursor_version": "2026.10.01-e373342",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000b/00000000-0000-0000-0000-00000000000b.jsonl"
+    },
+    "cli/postToolUseFailure-Shell-denied": {
+      "conversation_id": "00000000-0000-0000-0000-00000000000b",
+      "generation_id": "00000000-0000-0000-0000-00000000000b",
+      "model": "default",
+      "tool_name": "Shell",
+      "tool_input": {
+        "command": "echo SHELL_DENY",
+        "cwd": "",
+        "timeout": 30000
+      },
+      "error_message": "Command execution was blocked by a hook: SHELL_DENY user message\n\nTo view or modify configured hooks, go to Cursor Settings > Hooks.\n\nAgent note: Do not suggest workarounds to the blocked tool.",
+      "failure_type": "permission_denied",
+      "duration": 0,
+      "tool_use_id": "00000000-0000-0000-0000-00000000000e",
+      "is_interrupt": false,
+      "cwd": "",
+      "session_id": "00000000-0000-0000-0000-00000000000b",
+      "hook_event_name": "postToolUseFailure",
+      "cursor_version": "2026.10.01-e373342",
+      "workspace_roots": [
+        "/WORKSPACE"
+      ],
+      "user_email": "user@example.invalid",
+      "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000b/00000000-0000-0000-0000-00000000000b.jsonl"
+    }
+  }
+}
