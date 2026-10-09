@@ -18,10 +18,12 @@ the user enters plan mode only by choice (`Shift+Tab`). If the session is in pla
   step 4. Accepting a plan in plan mode is **not** the SDLC approval: the code gate stays
   closed until the user types `sdlc approve plan` (or presses *Approve plan*).
 
-Outside plan mode, follow the same steps and write `plan.md` directly.
+Outside plan mode, follow the same steps and write `plan.md` directly. Cursor's Plan mode
+works the same way: the plan it drafts is not the SDLC approval. Write it to `plan.md` in
+the template's sections and ask for `sdlc approve plan`.
 
-1. **Read** `spec.md` (or `intent.md` if the spec was skipped), `CLAUDE.md`, and the code
-   you will touch. Explore enough to name concrete files and functions.
+1. **Read** `spec.md` (or `intent.md` if the spec was skipped), `CLAUDE.md` or `AGENTS.md`,
+   and the code you will touch. Explore enough to name concrete files and functions.
 2. **Interview the engineer.** Ask about the choices that matter: approach alternatives,
    risky areas, migration strategy, test strategy. Recommend an option; don't just list them.
 3. **Write `plan.md`** from [template.md](template.md):

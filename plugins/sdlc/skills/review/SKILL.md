@@ -13,9 +13,10 @@ passed): check the pre-flight, then go straight to step 4.
 1. **Pre-flight.** Verification from **sdlc:verify** has passed in this session and
    `git status` shows only intended changes. Artifacts in `docs/sdlc/<slug>/` are committed.
 2. **Independent agent review.** Launch the `sdlc-reviewer` subagent (fresh context, no
-   bias from writing the code) with the feature slug and the base branch. If the
-   `/code-review` skill is available, run it too. Review categories and severity come
-   from `REVIEW.md`. The plugin records the reviewer's verdict line with the code it read:
+   bias from writing the code) with the feature slug and the base branch; in Cursor, start
+   it through the Task tool with that subagent type. If the `/code-review` skill is
+   available, run it too. Review categories and severity come from `REVIEW.md`. In Claude
+   Code the plugin records the reviewer's verdict line with the code it read:
    `READY FOR HUMAN REVIEW` makes the SDLC bar offer *Create PR*, `CHANGES REQUIRED` makes
    it offer *Review again*. Any later code change makes the verdict stale. In your report,
    quote the reviewer's verdict line exactly as it wrote it, then its findings.
@@ -31,6 +32,7 @@ passed): check the pre-flight, then go straight to step 4.
    - risks, rollback, and what needs human attention (the risky files/decisions).
 5. **Human gate.** Merging requires a human approval via branch protection. Address
    reviewer comments (including `@claude` mentions) with new commits, not force-pushes.
-6. **Close the loop.** Recurring review findings become rules in `CLAUDE.md` or a skill.
+6. **Close the loop.** Recurring review findings become rules in `CLAUDE.md`, `AGENTS.md`
+   or a skill.
    Once the PR exists, the user closes the feature: *Close feature* in the SDLC bar, or
    `sdlc done`.

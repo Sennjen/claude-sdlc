@@ -16,9 +16,10 @@ description: SDLC stage 6 (Maintain) - close the loop - turn incidents, alerts, 
 ## Prevent recurrence
 - **Regression test / eval:** every fixed incident gets a test or eval that would have
   caught it, wired into CI.
-- **Institutional knowledge:** if Claude or the team made the same mistake twice, add a
-  one-line rule to `CLAUDE.md` (repo-specific) or to a skill (organisation-wide). Keep
-  CLAUDE.md short: replace stale rules instead of appending forever.
+- **Institutional knowledge:** if the agent or the team made the same mistake twice, add a
+  one-line rule to `CLAUDE.md` or `AGENTS.md` (repo-specific) or to a skill
+  (organisation-wide). Keep these files short: replace stale rules instead of appending
+  forever.
 - **Gates:** if a problem slipped through a gate, propose a change to `REVIEW.md`,
   `sdlc.config.json` (verify commands, gated commands) or CI.
 

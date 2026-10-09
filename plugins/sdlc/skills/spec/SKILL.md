@@ -8,7 +8,8 @@ description: SDLC stage 2 (Design) - turn an approved intent.md into docs/sdlc/<
 Input: the approved `intent.md` of the active feature. Output: `spec.md` from
 [template.md](template.md), ready for a human to approve.
 
-1. **Read** `intent.md`, `CLAUDE.md`, and the code areas named under affected systems.
+1. **Read** `intent.md`, `CLAUDE.md` or `AGENTS.md`, and the code areas named under
+   affected systems.
 2. **Apply organisational constraints.** Load every relevant skill available in this
    session (security, compliance, brand, UX, API standards, accessibility...) and treat
    them as hard constraints. Record which ones you applied.

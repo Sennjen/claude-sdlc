@@ -5,7 +5,8 @@ description: SDLC stage 3b (Build) - implement an approved plan.md step by step 
 
 # Stage 3b - Build against the approved plan
 
-1. **Load context.** Read `plan.md`, `spec.md`, `progress.md` (if any) and `CLAUDE.md`.
+1. **Load context.** Read `plan.md`, `spec.md`, `progress.md` (if any) and `CLAUDE.md` or
+   `AGENTS.md`.
    Create a branch if you are on the default branch (`feat/<slug>` or `fix/<slug>`).
 2. **Follow the work sequence.** One step at a time:
    - write or update the test for the step first where practical;
