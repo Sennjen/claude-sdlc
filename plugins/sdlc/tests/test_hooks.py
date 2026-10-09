@@ -45,8 +45,11 @@ class HookTest(unittest.TestCase):
         return os.path.join(self.root, rel)
 
     def write(self, rel, text):
-        os.makedirs(os.path.dirname(self.path(rel)) or self.root, exist_ok=True)
-        with open(self.path(rel), "w") as f:
+        self.write_abs(self.path(rel), text)
+
+    def write_abs(self, path, text):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
             f.write(text)
 
     def hook(self, name, **payload):
@@ -553,9 +556,10 @@ class HookTest(unittest.TestCase):
             out = self.hook("pre-edit", tool_name="Write", tool_input={"file_path": os.path.join(home, path)})
             self.assertEqual(out, {}, path)
         for cmd in ("echo '{}' > ~/.cursor/hooks.json", "cp hooks.json $HOME/.claude/settings.json",
-                    "echo '{}' | tee ${HOME}/.cursor/plugins/local/x/hooks/cursor.json",
                     "sed -i '' s/a/b/ ~/.claude/settings.local.json"):
             self.assertEqual(self.bash(cmd), "ask", cmd)
+        # Read literally (quoted), this target is a code file in the repository: the gate is closed.
+        self.assertEqual(self.bash("echo '{}' | tee ${HOME}/.cursor/plugins/local/x/hooks/cursor.json"), "deny")
         for cmd in ("cat ~/.claude/settings.json", "echo x > ~/.claude/projects/p/memory/note.md",
                     "cp a /tmp/settings.json"):
             self.assertEqual(self.bash(cmd), "allow", cmd)
@@ -567,6 +571,7 @@ class HookTest(unittest.TestCase):
         for cmd in ("echo x > ~/.cursor/plugins/local/x/hooks/cursor.json",
                     "cp a ~/.claude/plugins/x.json", "echo '{}' > ~/.cursor/cli-config.json",
                     "cp settings.json ~/.claude/", "mv hooks.json ~/.cursor/",
+                    "echo '{}' | tee ${HOME}/.cursor/plugins/local/x/hooks/cursor.json",
                     "cp -r evil ~/.cursor/plugins/local", "sed -i '' s/a/b/ ~/.claude/*.json"):
             out = self.hook("pre-bash", tool_name="Bash", tool_input={"command": cmd})
             self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask", cmd)
@@ -579,6 +584,52 @@ class HookTest(unittest.TestCase):
         out = self.hook("pre-edit", tool_name="Write",
                         tool_input={"file_path": os.path.join(self.home, ".claude", "settings.json")})
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
+
+    def test_quoted_home_is_also_read_literally(self):
+        # In quotes the shell keeps ~ and $HOME as they are: a link named `~` leads back into
+        # the repository, so the literal reading must keep the denials it had.
+        self.cli("new", "feat-a")
+        os.symlink(".", self.path("~"))
+        os.symlink(".", self.path("$HOME"))
+        self.assertEqual(self.bash("echo x > '~/src/app.js'"), "deny")
+        self.assertEqual(self.bash("echo '{}' > '$HOME/sdlc.config.json'"), "ask")
+        self.to_build()
+        self.cli("lock-tests")
+        self.assertEqual(self.bash("echo x > '~/tests/test_a.py'"), "deny")
+        # `~/..` must not fold into a repository path before ~ is expanded.
+        name = os.path.basename(self.home)
+        self.assertEqual(self.bash("cp -r evil ~/../%s/.cursor/plugins/local/" % name), "ask")
+
+    def test_host_globs_and_resolved_symlinks(self):
+        self.to_build()
+        os.makedirs(os.path.join(self.home, ".cursor", "plugins", "local"))
+        self.assertEqual(self.bash("cp -r evil ~/.cu*/plugins/local/"), "ask")
+        # dotfiles: ~/.claude/settings.json is a link to the file that really changes.
+        os.makedirs(os.path.join(self.home, "dotfiles", "claude"))
+        os.makedirs(os.path.join(self.home, ".claude"))
+        real = os.path.join(self.home, "dotfiles", "claude", "settings.json")
+        self.write_abs(real, "{}")
+        os.symlink(real, os.path.join(self.home, ".claude", "settings.json"))
+        out = self.hook("pre-edit", tool_name="Write", tool_input={"file_path": real})
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
+
+    def test_always_protected_inside_artifacts(self):
+        self.cli("new", "feat-a")
+        for rel in ("docs/sdlc/feat-a/sdlc.config.json", "docs/sdlc/feat-a/AGENTS.md"):
+            self.assertEqual(self.edit(rel), "ask", rel)
+        self.assertEqual(self.edit("docs/sdlc/feat-a/intent.md"), "allow")
+
+    def test_deploy_decisions(self):
+        self.write("sdlc.config.json", json.dumps({"verify": [], "gated_command_decision": "allow"}))
+        self.cli("new", "feat-a")
+        self.assertEqual(self.bash("git push origin main; echo x > src/app.js"), "deny")
+        self.assertEqual(self.bash("git push origin main"), "allow")
+        self.write("sdlc.config.json", json.dumps({"verify": []}))
+        self.to_build()
+        self.assertEqual(self.bash("git push origin main && echo x > CLAUDE.md"), "ask")
+        with open(self.path(".sdlc/audit.log")) as f:
+            last = [json.loads(line) for line in f][-1]
+        self.assertEqual((last["event"], last.get("path")), ("gate-ask", "CLAUDE.md"))
 
     def test_strictest_decision_in_one_command(self):
         self.cli("new", "feat-a")

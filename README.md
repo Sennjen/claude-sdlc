@@ -33,7 +33,7 @@ differs there.
 | Self-approval | `PreToolUse` | The agent cannot write `approvals.json` or `.sdlc/`, call the hook scripts directly, or send user commands (`sdlc approve ...`) through a nested `claude`, `cursor-agent` or `agent` session. Reading them (`cat`, `grep`, `jq`, `git log`) is allowed |
 | Test lock | `PreToolUse` | After `sdlc lock-tests` (bug-fix flow) test files are read-only until the user unlocks them |
 | Protected files | `PreToolUse` | Files that steer the agent need user confirmation (`ask`): `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` in any directory, `.claude/` settings, hooks, agents, skills, commands, rules and output styles, `.cursorrules`, `.cursor/` hooks, rules, agents, skills, commands, `mcp.json`, `cli.json`, `environment.json` and `worktrees.json`, `.mcp.json`, `REVIEW.md`, and `sdlc.config.json` in any directory. The Cursor entries and `sdlc.config.json` apply also when a project sets its own `protected_paths` |
-| Host configuration | `PreToolUse` | Writes outside the repository to configuration that can add hooks or change plugins need user confirmation: `hooks.json`, `hooks/`, `plugins/`, `cli-config.json`, `mcp.json`, agents and skills under `~/.cursor/`; `settings*.json`, `hooks/`, `plugins/`, agents, skills and commands under `~/.claude/`. A copy into one of these directories, a glob there and a symlinked `~/.claude` count too. `protected_host_paths` in `sdlc.config.json` adds more. Memory (`~/.claude/projects/`) and other files stay writable |
+| Host configuration | `PreToolUse` | Writes outside the repository to configuration that can add hooks or change plugins need user confirmation: `hooks.json`, `hooks/`, `plugins/`, `cli-config.json`, `mcp.json`, agents and skills under `~/.cursor/`; `settings*.json`, `hooks/`, `plugins/`, agents, skills and commands under `~/.claude/`. A copy into one of these directories, a glob there, a symlinked `~/.claude` and the real file behind a dotfiles link count too. `protected_host_paths` in `sdlc.config.json` adds more. Memory (`~/.claude/projects/`) and other files stay writable |
 | One decision per command | `PreToolUse` Bash | A shell command gets its strictest decision: a denied write target wins over one that needs the user and over the deploy gate, so approving a push never lets a gated write through |
 | Deploy gate | `PreToolUse` Bash | `gh pr merge`, publish and deploy commands need user confirmation (`ask`). So does a `git push` to a protected branch (`protected_branches`: `main`, `master`, `release/*`), with force, delete, tags or mirror, or one the hook cannot read. A push that only updates other branches passes: the PR and branch protection guard the rest |
 | Plan drift | `PreToolUse` Edit/Write | In build, an edit to a code or test file that `plan.md` does not list under *Files affected* gets a note, once per file and session: add the file to the plan and re-approve, or undo the edit. It does not block |
@@ -263,7 +263,9 @@ shows the status, and the message never reaches the model.
   decision wins. A `cd` through a variable, `pushd` or a script is not tracked.
 - The policy root is the workspace root that Cursor names (or an ancestor of it with
   `sdlc.config.json`), never a config next to the edited file. In a multi-root workspace,
-  the root that contains `sdlc.config.json` is gated; the others are not.
+  the root that contains `sdlc.config.json` is gated; the others are not. In a workspace
+  opened above the repository, an edit is gated by the repository it lands in, but a shell
+  call with no reported directory is not checked.
 - In Cursor IDE a stop-hook follow-up reaches the prompt hook like a typed message. That is
   why every hook and plugin file of both hosts is protected (see *Host configuration*).
 - Cursor imports Claude Code plugins' skills by default. On a machine with both plugins you
@@ -328,8 +330,10 @@ docs/sdlc/<feature>/
   no note.
 - The Stop gate runs the verify commands itself, so keep them fast.
 - Shell deletes (`rm`) are not gated in either host; Cursor's `Delete` tool is.
-- The host configuration check sees edit tools and recognized shell writes, with `~`,
-  `$HOME` and `${HOME}` expanded. A script that writes there is not seen.
+- The host configuration check sees edit tools and recognized shell writes. A shell target
+  that starts with `~`, `$HOME` or `${HOME}` is judged twice, expanded and as written (the
+  shell keeps it as written inside quotes), and the stricter decision wins. A script that
+  writes there is not seen.
 - On Claude Code 2.1.291 a hook's `ask` holds in `bypassPermissions` mode too:
   `claude -p --dangerously-skip-permissions` denies the gated call, so an interactive session
   should show the prompt. Older versions may not; set `"gated_command_decision": "deny"` if

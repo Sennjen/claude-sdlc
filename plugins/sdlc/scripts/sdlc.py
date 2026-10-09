@@ -10,6 +10,7 @@ so the agent cannot approve its own intent, spec or plan.
 """
 import datetime
 import getpass
+import glob
 import hashlib
 import json
 import os
@@ -190,9 +191,11 @@ class Project(object):
         """state | approvals | artifact | protected | test | docs | code"""
         if rel == STATE_DIR or rel.startswith(STATE_DIR + "/"):
             return "state"
+        if matches(rel, ALWAYS_PROTECTED_PATHS):  # also inside the artifacts directory
+            return "protected"
         if rel.startswith(self.art_rel + "/"):
             return "approvals" if rel.endswith("/approvals.json") else "artifact"
-        if matches(rel, self.cfg["protected_paths"] + ALWAYS_PROTECTED_PATHS):
+        if matches(rel, self.cfg["protected_paths"]):
             return "protected"
         if matches(rel, self.cfg["test_paths"]):
             return "test"
@@ -290,25 +293,42 @@ class Project(object):
         path = os.path.expanduser(HOME_VAR.sub(lambda m: home, path))
         if not os.path.isabs(path):
             path = os.path.join(cwd or self.root, path)
-        # A glob (`~/.claude/*.json`) is judged by the directory it starts in.
         parts = GLOB_CHARS.split(path, 1)
-        is_glob = len(parts) > 1
-        base = os.path.dirname(parts[0]) if is_glob else path
-        # Both spellings: a symlinked ~/.claude must not hide the file it points to.
-        targets = {os.path.normpath(base), os.path.realpath(base)}
+        if len(parts) == 1:
+            hit = self.host_target(path)
+        else:
+            # A glob (`~/.claude/*.json`): the directory it starts in, and every path it matches.
+            hit = self.host_target(os.path.dirname(parts[0]), below=True)
+            for match in glob.glob(path)[:200]:
+                hit = hit or self.host_target(match)
+        if hit:
+            return ("%s is host configuration outside the repository: it can add hooks or change "
+                    "plugins, so the user must confirm this edit." % hit)
+        return None
+
+    def host_target(self, path, below=False):
+        """The spelling of an absolute path that is host configuration, or None. With `below`,
+        a path anywhere under `path` counts too."""
+        home = os.path.expanduser("~")
+        targets = {os.path.normpath(path), os.path.realpath(path)}
         homes = {os.path.normpath(home), os.path.realpath(home)}
         for pattern in HOST_CONFIG_PATHS + list(self.cfg.get("protected_host_paths") or []):
             for h in homes:
                 full = h + pattern[1:] if pattern.startswith("~/") else pattern
-                regex = glob_to_regex(full)
-                # The directory the pattern's files live in: ~/.claude for ~/.claude/settings*.json.
+                # The directory the pattern's files live in (~/.claude for ~/.claude/settings*.json),
+                # also where a symlink puts it, and the files a pattern names behind symlinks
+                # (dotfiles): writing through the resolved path is the same write.
                 folder = os.path.dirname(GLOB_CHARS.split(full, 1)[0] + "x")
+                real_folder = os.path.realpath(folder)
+                regexes = [glob_to_regex(f) for f in {full, real_folder + full[len(folder):]}]
+                resolved = {os.path.realpath(m) for m in glob.glob(full)[:200]}
                 for t in targets:
+                    if t in resolved or any(r.match(t) or (below and r.match(t + "/x")) for r in regexes):
+                        return t
                     # A directory destination (`cp x ~/.claude/`) writes into that directory.
-                    into = t.startswith(h + os.sep) and (folder == t or folder.startswith(t + os.sep))
-                    if regex.match(t) or (is_glob and regex.match(t + "/x")) or into:
-                        return ("%s is host configuration outside the repository: it can add hooks or "
-                                "change plugins, so the user must confirm this edit." % t)
+                    if any(t.startswith(h + os.sep) and (f == t or f.startswith(t + os.sep))
+                           for f in (folder, real_folder)):
+                        return t
         return None
 
     def audit(self, event, **kw):
@@ -740,13 +760,21 @@ def bash_write_targets(cmd, cwd=None):
                 if text is not None and counts.get(name) == 1:
                     env[name] = text
     clean = []
+    home = os.path.expanduser("~")
     for t in targets:
         t = t.strip("'\"")
-        if t and t != "?":
-            t = os.path.normpath(t)
-        if not t or t in SAFE_SINKS or t.startswith(TMP_PREFIXES):
-            continue
-        clean.append(t)
+        readings = [t]
+        if t.startswith("~") or HOME_VAR.match(t):
+            # The shell expands ~ and $HOME only when they are not quoted, and the quotes are
+            # gone here: judge both readings. The literal one stays relative ("./~/x"), and is
+            # not normalized, so `~/..` cannot fold into a path that skips the home directory.
+            readings = [os.path.expanduser(HOME_VAR.sub(lambda m: home, t)), "./" + t]
+        for r in readings:
+            if r and r != "?" and not r.startswith("./"):
+                r = os.path.normpath(r)
+            if not r or r in SAFE_SINKS or r.startswith(TMP_PREFIXES):
+                continue
+            clean.append(r)
     return clean
 
 
@@ -1377,12 +1405,12 @@ def hook_pre_bash(data, p):
         if branches and not any(matches(b, p.cfg["protected_branches"]) for b in branches):
             pattern = gated_pattern(cmd, [g for g in p.cfg["gated_commands"] if not re.search(g, "git push")])
     deploy = None
-    if pattern:
+    if pattern and p.cfg["gated_command_decision"] != "allow":
         deploy = (DEPLOY_GATE + "`%s` needs explicit user approval. Make sure verification passed "
                   "and the PR review (skill sdlc:review) is done." % cmd[:120])
-        if p.cfg["gated_command_decision"] != "ask":
-            p.audit("gate-" + p.cfg["gated_command_decision"], tool="Bash", command=cmd[:300], reason=pattern)
-            pre_decision(p.cfg["gated_command_decision"], deploy)
+        if p.cfg["gated_command_decision"] == "deny":
+            p.audit("gate-deny", tool="Bash", command=cmd[:300], reason=pattern)
+            pre_decision("deny", deploy)
     scratch = data.get("scratchpad_dir")
     # A write that needs the user. A denied target in the same command wins over it, and over
     # the deploy gate: approving the push must not let a gated write through.
@@ -1394,7 +1422,6 @@ def hook_pre_bash(data, p):
                 pre_decision("deny", "A shell write whose target the hook cannot read (a patch, an "
                                      "in-place edit with no file) is blocked. " + reason)
             continue
-        target = HOME_VAR.sub(lambda m: os.path.expanduser("~"), target)
         if scratch and os.path.abspath(os.path.join(cwd, target)).startswith(os.path.abspath(scratch)):
             continue
         rel = p.rel(target, cwd)
@@ -1408,7 +1435,9 @@ def hook_pre_bash(data, p):
         if decision == "allow":
             continue
         if decision == "ask":
-            ask = ask or reason
+            if not ask:
+                p.audit("gate-ask", tool="Bash", command=cmd[:300], path=rel, reason=reason)
+                ask = reason
             continue
         p.audit("gate-deny", tool="Bash", command=cmd[:300], path=rel, reason=reason)
         pre_decision("deny", reason + " Prefer the Edit/Write tools for file changes.")

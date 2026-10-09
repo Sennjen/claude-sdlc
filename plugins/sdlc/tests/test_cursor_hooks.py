@@ -287,6 +287,25 @@ class CursorHookTest(unittest.TestCase):
             self.assertIn("make this change themselves", out["user_message"], cmd)
         self.assertEqual(self.shell("git push origin main")["permission"], "ask")
 
+    def test_each_directory_is_mapped_before_ranking(self):
+        self.to_build()
+        os.makedirs(self.path("a/b"))
+        shell = self.payload("cli/preToolUse-Shell-cwd", conversation_id=SID, session_id=SID)
+        shell["tool_input"]["cwd"] = shell["cwd"] = self.path("a/b")
+        self.run_adapter("preToolUse", shell)
+        # From the root only the push asks; from a/b the write hits .mcp.json, which is denied.
+        out = self.shell("git push origin main; echo x > ../../.mcp.json")
+        self.assertEqual(out["permission"], "deny")
+        self.assertIn(".mcp.json", out["user_message"])
+
+    def test_diffs_and_written_text(self):
+        diff = "--- a/src/app.js\n+++ b/src/app.js\n@@ -1 +1 @@\n-console.log(1)\n+console.log(2)\n"
+        self.assertEqual(self.tool("ApplyDiff", {"diff": diff})["permission"], "deny")
+        self.assertEqual(self.tool("ApplyDiff", {"diff": "@@ -1 +1 @@\n-a\n+b\n"})["permission"], "deny")
+        # A Write's content is data: diff-like lines in it name no target.
+        out = self.tool("Write", {"file_path": self.path("docs/notes.md"), "content": "---\n--- a/src/app.js\n"})
+        self.assertEqual(out, {"permission": "allow"})
+
     def test_planted_config_is_ignored(self):
         # The workspace root Cursor names is the policy root, not a config nearer the file.
         self.write("docs/sdlc.config.json", "{}")

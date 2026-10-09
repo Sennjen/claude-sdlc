@@ -26,6 +26,8 @@ PATH_FIELDS = ("file_path", "path", "target_file", "notebook_path", "filePath")
 LIST_FIELDS = ("paths", "file_paths", "files", "target_files")
 PATCH_FILE = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): *(.+?)\s*$", re.M)
 PATCH_START = "*** Begin Patch"
+DIFF_FILE = re.compile(r"^(?:\+\+\+|---) (?:[ab]/)?(\S+)", re.M)  # unified diff headers
+DIFF_HUNK = re.compile(r"^@@ ", re.M)
 # A `cd` the shell runs: Cursor's shell keeps its directory for later calls.
 CD = re.compile(r"(?:^|[;&|(\n]\s*)cd\s+(?:--\s+)?([^\s;&|()]+)")
 # Cursor ignores "ask" for tool calls, and its CLI runs a shell "ask" without a prompt under
@@ -77,7 +79,7 @@ def project_root(data, paths=()):
             return root
     if found:
         return found[0]
-    fallback = [os.path.dirname(f) for f in files] + [data.get("cwd")]
+    fallback = [f if os.path.isdir(f) else os.path.dirname(f) for f in files] + [data.get("cwd")]
     return next((r for r in (config_root(s) for s in fallback if isinstance(s, str) and s) if r), None)
 
 
@@ -143,15 +145,18 @@ def edit_targets(data):
             if isinstance(tool_input.get(f), list):
                 found += [x for x in tool_input[f] if isinstance(x, str)]
     texts = list(strings(tool_input))
-    for text in texts:
-        found += PATCH_FILE.findall(text)
+    if not found and tool not in ("Write", "Delete"):
+        # No path field: the files a patch or diff names. A Write's content is only data.
+        for text in texts:
+            found += PATCH_FILE.findall(text)
+            found += [f for f in DIFF_FILE.findall(text) if f != "/dev/null"]
     out = []
     for path in found:
         if path and path not in out:
             out.append(path)
     if out:
         return out
-    if tool in ("Write", "Delete") or any(PATCH_START in t for t in texts):
+    if tool in ("Write", "Delete") or (not found and any(PATCH_START in t or DIFF_HUNK.search(t) for t in texts)):
         return ["?"]
     return []
 
@@ -249,15 +254,15 @@ def on_shell(sdlc, p, data, sid):
         out = run(sdlc.hook_pre_bash, {"session_id": sid, "cwd": candidate, "tool_name": "Bash",
                                        "tool_input": {"command": command}}, p)
         decision, reason, _ = decision_of(out)
+        if decision == "ask" and not reason.startswith(sdlc.DEPLOY_GATE):
+            # A write that needs a person: map it before ranking, so a deploy-only ask from
+            # another directory cannot hide it.
+            decision, reason = "deny", reason + MANUAL_STEP
         if RANK.get(decision, 2) > RANK[best[0]]:
             best = (decision, reason)
     later = (known if cwd else known[1:]) + [d for d in moved if d not in known]
     save_shell_dirs(p, sid, later[-MAX_SHELL_DIRS:])
-    if best[0] == "allow":
-        return dict(ALLOW)
-    if best[0] == "ask" and not best[1].startswith(sdlc.DEPLOY_GATE):
-        return answer("deny", best[1] + MANUAL_STEP)
-    return answer(*best)
+    return answer(*best) if best[0] != "allow" else dict(ALLOW)
 
 
 def on_post_tool(sdlc, p, data, sid):
@@ -304,7 +309,10 @@ def handle(event, raw):
     data = json.loads(raw) if raw.strip() else {}
     if not isinstance(data, dict):
         raise ValueError("hook input is not a JSON object")
-    paths = edit_targets(data) if event in ("preToolUse", "postToolUse") else []
+    if event in ("preToolUse", "postToolUse"):
+        paths = edit_targets(data)
+    else:  # a shell call: its directory picks the root in a multi-root workspace
+        paths = [data.get("cwd")] if event == "beforeShellExecution" else []
     root = project_root(data, paths)
     if not root or event not in HANDLERS:
         return neutral(event)
