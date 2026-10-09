@@ -278,11 +278,64 @@ class CursorHookTest(unittest.TestCase):
         out = self.claude_hook("pre-edit", tool_name="Write", tool_input={"file_path": self.path("src/app.js")})
         self.assertNotIn("hookSpecificOutput", out)
 
+    def test_shell_writes_that_need_the_user_are_denied(self):
+        self.to_build()
+        for cmd in ("echo '{}' > $HOME/.cursor/hooks.json", "echo x > ~/.claude/settings.json",
+                    "echo x > AGENTS.md", "git push origin main; echo x > AGENTS.md"):
+            out = self.shell(cmd)
+            self.assertEqual(out["permission"], "deny", cmd)
+            self.assertIn("make this change themselves", out["user_message"], cmd)
+        self.assertEqual(self.shell("git push origin main")["permission"], "ask")
+
+    def test_planted_config_is_ignored(self):
+        # The workspace root Cursor names is the policy root, not a config nearer the file.
+        self.write("docs/sdlc.config.json", "{}")
+        self.write("tests/sdlc.config.json", "{}")
+        out = self.run_adapter("beforeShellExecution", self.payload(
+            "ide/beforeShellExecution", command="echo x > ../src/app.js", cwd=self.path("docs")))
+        self.assertEqual(out["permission"], "deny")
+        self.to_build()
+        self.claude_cli("lock-tests")
+        self.assertEqual(self.write_call("tests/test_a.py")["permission"], "deny")
+        self.assertEqual(self.write_call("src/sdlc.config.json")["permission"], "deny")
+
+    def test_patch_tools(self):
+        patch = "*** Begin Patch\n*** Update File: src/app.js\n@@\n-console.log(1)\n+console.log(2)\n*** End Patch\n"
+        self.assertEqual(self.tool("ApplyPatch", {"patch": patch})["permission"], "deny")
+        self.assertEqual(self.tool("ApplyPatch", patch)["permission"], "deny")
+        self.assertEqual(self.tool("Write", {"contents": "x"})["permission"], "deny")
+        self.assertEqual(self.tool("TodoWrite", "update the path list"), {"permission": "allow"})
+        self.assertEqual(self.tool("TodoWrite", {"todos": [{"content": "x"}]}), {"permission": "allow"})
+        self.to_build()
+        self.assertEqual(self.tool("ApplyPatch", {"patch": patch}), {"permission": "allow"})
+        self.claude_cli("lock-tests")
+        locked = patch + "*** Add File: tests/test_new.py\n+x\n"
+        out = self.tool("ApplyPatch", {"patch": locked})
+        self.assertIn("Test files are locked", out["user_message"])
+
+    def test_cd_is_followed(self):
+        self.to_build()
+        self.claude_cli("lock-tests")
+        self.assertEqual(self.shell("cd tests"), {"permission": "allow"})
+        self.assertEqual(self.shell("echo x > helper.py")["permission"], "deny")
+        self.assertEqual(self.shell("pwd", cwd=self.root), {"permission": "allow"})  # known again
+        self.assertEqual(self.shell("echo x > helper.py"), {"permission": "allow"})
+        self.assertEqual(self.shell("cd tests && echo x > helper2.py")["permission"], "deny")
+
+    def test_fixtures_hold_no_personal_data(self):
+        with open(os.path.join(HERE, "fixtures", "cursor", "payloads.json")) as f:
+            text = f.read()
+        for marker in ("@", "/Users/", "/home/", "/private/"):
+            self.assertNotIn(marker, text)
+
     def test_gates_fail_closed(self):
         self.to_build()
-        out = self.tool("Write", {"file_path": 123})
+        # A config the policy cannot read crashes the handler.
+        self.write("sdlc.config.json", json.dumps({"verify": [], "protected_paths": 5}))
+        out = self.write_call("src/app.js")
         self.assertEqual(out["permission"], "deny")
         self.assertIn("failed closed", out["user_message"])
+        self.write("sdlc.config.json", json.dumps({"verify": []}))
         self.assertEqual(self.run_adapter("beforeShellExecution", "not json")["permission"], "deny")
         self.assertEqual(self.run_adapter("beforeSubmitPrompt", "not json"), {"continue": True})
         # Without sdlc.py next to it, the adapter cannot load the policy: the gates deny.
@@ -295,8 +348,8 @@ class CursorHookTest(unittest.TestCase):
         self.assertIn("could not load sdlc.py", out["user_message"])
         self.assertEqual(self.run_adapter("stop", self.payload("ide/stop"), script=script), {})
         # The person can let calls through while the bug is fixed.
-        self.write("sdlc.config.json", json.dumps({"verify": [], "on_hook_error": "allow"}))
-        self.assertEqual(self.tool("Write", {"file_path": 123}), {"permission": "allow"})
+        self.write("sdlc.config.json", json.dumps({"verify": [], "protected_paths": 5, "on_hook_error": "allow"}))
+        self.assertEqual(self.write_call("src/app.js"), {"permission": "allow"})
         out = self.run_adapter("preToolUse", self.payload("ide/preToolUse-Write"), script=script)
         self.assertEqual(out, {"permission": "allow"})
 

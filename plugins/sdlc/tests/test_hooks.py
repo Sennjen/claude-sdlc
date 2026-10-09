@@ -561,10 +561,47 @@ class HookTest(unittest.TestCase):
             self.assertEqual(self.bash(cmd), "allow", cmd)
         # A denied target in the same command wins over one that only needs the user.
         self.assertEqual(self.bash("echo '{}' > ~/.cursor/hooks.json; echo x > src/app.js"), "deny")
-        # A project can add its own host paths.
+
+    def test_host_configuration_forms(self):
+        self.to_build()  # with the code gate open, only the host check can stop these
+        for cmd in ("echo x > ~/.cursor/plugins/local/x/hooks/cursor.json",
+                    "cp a ~/.claude/plugins/x.json", "echo '{}' > ~/.cursor/cli-config.json",
+                    "cp settings.json ~/.claude/", "mv hooks.json ~/.cursor/",
+                    "cp -r evil ~/.cursor/plugins/local", "sed -i '' s/a/b/ ~/.claude/*.json"):
+            out = self.hook("pre-bash", tool_name="Bash", tool_input={"command": cmd})
+            self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask", cmd)
+            self.assertIn("host configuration", out["hookSpecificOutput"]["permissionDecisionReason"], cmd)
+        for cmd in ("echo x > ~/notes.txt", "cp a ~/.claude/projects/p/", "cp report.pdf ~/"):
+            self.assertEqual(self.bash(cmd), "allow", cmd)
+        # A symlinked ~/.claude still protects the files it holds.
+        os.makedirs(os.path.join(self.home, "dotfiles", "claude"))
+        os.symlink(os.path.join(self.home, "dotfiles", "claude"), os.path.join(self.home, ".claude"))
+        out = self.hook("pre-edit", tool_name="Write",
+                        tool_input={"file_path": os.path.join(self.home, ".claude", "settings.json")})
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
+
+    def test_strictest_decision_in_one_command(self):
+        self.cli("new", "feat-a")
+        # Approving the push must not let a gated write through.
+        self.assertEqual(self.bash("git push origin main; echo x > src/app.js"), "deny")
+        self.assertEqual(self.bash("echo x > CLAUDE.md && echo y > src/app.js"), "deny")
+        self.to_build()
+        self.assertEqual(self.bash("git push origin main"), "ask")
+
+    def test_nested_config_is_protected(self):
+        self.to_build()
+        for rel in ("tests/sdlc.config.json", "docs/sdlc.config.json", "sub/sdlc.config.json"):
+            self.assertEqual(self.edit(rel), "ask", rel)
+
+    def test_project_files_named_sdlc_are_not_state(self):
+        self.to_build()
+        self.assertEqual(self.bash("python3 -m pytest tests/test_sdlc_api.py"), "allow")
+        self.assertEqual(self.bash("python3 scripts/sdlc_report.py"), "allow")
+
+    def test_project_adds_host_paths(self):
         self.write("sdlc.config.json", json.dumps({"verify": [], "protected_host_paths": ["~/.config/acme/**"]}))
         out = self.hook("pre-edit", tool_name="Write",
-                        tool_input={"file_path": os.path.join(home, ".config/acme/rules.json")})
+                        tool_input={"file_path": os.path.join(self.home, ".config/acme/rules.json")})
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
 
     def test_config_template_matches_defaults(self):

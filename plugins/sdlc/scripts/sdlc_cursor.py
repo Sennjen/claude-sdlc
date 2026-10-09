@@ -14,21 +14,26 @@ import os
 import re
 import sys
 
-sys.dont_write_bytecode = True  # never write __pycache__ into the installed plugin
-
 CONFIG_NAME = "sdlc.config.json"
 GATING = ("preToolUse", "beforeShellExecution")
 ALLOW = {"permission": "allow"}
-# Tools that only read. Any other tool whose input names a file is checked like an edit, so an
-# edit tool that Cursor reports under another name is not waved through. MCP tools pass, as
-# they do in Claude Code.
+# Tools that only read. Any other tool that names a file, or carries a patch, is checked like
+# an edit, so an edit tool that Cursor reports under another name is not waved through. MCP
+# tools pass, as they do in Claude Code.
 READ_ONLY_TOOLS = frozenset(("Read", "Grep", "Glob", "LS", "Task", "WebFetch", "WebSearch",
                              "SemanticSearch", "ReadLints"))
 PATH_FIELDS = ("file_path", "path", "target_file", "notebook_path", "filePath")
-# Cursor ignores "ask" for tool calls, so a file decision that needs a person is a denial.
-MANUAL_STEP = (" Cursor cannot ask for confirmation of a file edit, so it is blocked: ask the user "
+LIST_FIELDS = ("paths", "file_paths", "files", "target_files")
+PATCH_FILE = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to): *(.+?)\s*$", re.M)
+PATCH_START = "*** Begin Patch"
+# A `cd` the shell runs: Cursor's shell keeps its directory for later calls.
+CD = re.compile(r"(?:^|[;&|(\n]\s*)cd\s+(?:--\s+)?([^\s;&|()]+)")
+# Cursor ignores "ask" for tool calls, and its CLI runs a shell "ask" without a prompt under
+# --force, so a write that needs a person is a denial. Only the deploy gate keeps "ask".
+MANUAL_STEP = (" Cursor cannot ask for confirmation here, so the call is blocked: ask the user "
                "to make this change themselves.")
 RANK = {"allow": 0, "ask": 1, "deny": 2}
+MAX_SHELL_DIRS = 6
 
 
 def neutral(event):
@@ -40,27 +45,40 @@ def neutral(event):
     return {}
 
 
-def starts(data, path=None):
-    """Where to look for sdlc.config.json: the edited file's directory first, then the
-    shell's directory and the workspace roots."""
-    out = [os.path.dirname(path)] if isinstance(path, str) and os.path.isabs(path) else []
+def config_root(start):
+    """The nearest directory at or above `start` that holds sdlc.config.json."""
+    cur = os.path.abspath(start)
+    while True:
+        if os.path.isfile(os.path.join(cur, CONFIG_NAME)):
+            return cur
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return None
+        cur = parent
+
+
+def project_root(data, paths=()):
+    """The policy root. The workspace roots and project directory that Cursor sets come first:
+    the agent controls the edited file's directory and the shell's cwd, and a sdlc.config.json
+    planted there must not become the policy. Those count only when the host names no enabled
+    root (a workspace opened above the repository)."""
     roots = data.get("workspace_roots")
-    out += [data.get("cwd")] + (roots if isinstance(roots, list) else [])
-    out += [os.environ.get("CURSOR_PROJECT_DIR"), os.environ.get("CLAUDE_PROJECT_DIR")]
-    return [s for s in out if isinstance(s, str) and s]
-
-
-def config_root(candidates):
-    for start in candidates:
-        cur = os.path.abspath(start)
-        while True:
-            if os.path.isfile(os.path.join(cur, CONFIG_NAME)):
-                return cur
-            parent = os.path.dirname(cur)
-            if parent == cur:
-                break
-            cur = parent
-    return None
+    host = (roots if isinstance(roots, list) else []) + [os.environ.get("CURSOR_PROJECT_DIR"),
+                                                        os.environ.get("CLAUDE_PROJECT_DIR")]
+    found = []
+    for start in host:
+        root = config_root(start) if isinstance(start, str) and start else None
+        if root and root not in found:
+            found.append(root)
+    files = [os.path.realpath(f) for f in paths if isinstance(f, str) and os.path.isabs(f)]
+    for root in found:
+        real = os.path.realpath(root)
+        if any(f == real or f.startswith(real + os.sep) for f in files):
+            return root
+    if found:
+        return found[0]
+    fallback = [os.path.dirname(f) for f in files] + [data.get("cwd")]
+    return next((r for r in (config_root(s) for s in fallback if isinstance(s, str) and s) if r), None)
 
 
 def load_policy():
@@ -92,33 +110,77 @@ def run(handler, data, p):
 
 def decision_of(out):
     spec = out.get("hookSpecificOutput") or {}
-    return spec.get("permissionDecision") or "allow", spec.get("permissionDecisionReason") or "", \
-        spec.get("additionalContext")
+    return (spec.get("permissionDecision") or "allow", spec.get("permissionDecisionReason") or "",
+            spec.get("additionalContext"))
 
 
 def answer(decision, reason):
     return {"permission": decision, "user_message": reason, "agent_message": reason}
 
 
-def edit_path(data):
-    """The file a tool call writes, or None when the call writes no file."""
-    tool = data.get("tool_name") or ""
-    tool_input = data.get("tool_input") or {}
-    if tool in ("Write", "Delete"):
-        return tool_input.get("file_path")
+def strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from strings(item)
+
+
+def edit_targets(data):
+    """Files a tool call writes: their paths, ["?"] when it writes something the hook cannot
+    name (a Write without a path, a patch without file headers), or [] when it writes nothing."""
+    tool = data.get("tool_name") if isinstance(data.get("tool_name"), str) else ""
     if tool == "Shell" or tool.startswith("MCP:") or tool in READ_ONLY_TOOLS:
-        return None
-    return next((tool_input[f] for f in PATH_FIELDS if f in tool_input), None)
+        return []
+    tool_input = data.get("tool_input")
+    found = []
+    if isinstance(tool_input, dict):
+        found += [tool_input[f] for f in PATH_FIELDS if isinstance(tool_input.get(f), str)]
+        for f in LIST_FIELDS:
+            if isinstance(tool_input.get(f), list):
+                found += [x for x in tool_input[f] if isinstance(x, str)]
+    texts = list(strings(tool_input))
+    for text in texts:
+        found += PATCH_FILE.findall(text)
+    out = []
+    for path in found:
+        if path and path not in out:
+            out.append(path)
+    if out:
+        return out
+    if tool in ("Write", "Delete") or any(PATCH_START in t for t in texts):
+        return ["?"]
+    return []
 
 
-def remember_shell_cwd(p, sid, cwd):
-    """Cursor's shell keeps its directory between calls, but a call reports it only when the
-    agent sets it. Keep the last one, to judge relative write targets of later calls."""
-    if isinstance(cwd, str) and cwd:
-        sess = p.session(sid)
-        if sess.get("shell_cwd") != cwd:
-            sess["shell_cwd"] = cwd
-            p.save_session(sid, sess)
+def shell_dirs(p, sid):
+    dirs = p.session(sid).get("shell_dirs")
+    return [d for d in dirs if isinstance(d, str)] if isinstance(dirs, list) else []
+
+
+def save_shell_dirs(p, sid, dirs):
+    sess = p.session(sid)
+    if sess.get("shell_dirs") != dirs:
+        sess["shell_dirs"] = dirs
+        p.save_session(sid, sess)
+
+
+def cd_targets(command, bases):
+    """Directories the command's literal `cd` calls lead to, from each possible start."""
+    out = []
+    for word in CD.findall(command):
+        word = word.strip("'\"")
+        if not word or word == "-" or re.search(r"[$`*?\[]", word):
+            continue  # a variable, a substitution or a glob: not a directory the hook can name
+        word = os.path.expanduser(word)
+        for base in bases:
+            target = os.path.normpath(word if os.path.isabs(word) else os.path.join(base, word))
+            if target not in out:
+                out.append(target)
+    return out
 
 
 # ------------------------------------------------------------------------------ events
@@ -141,20 +203,31 @@ def on_prompt(sdlc, p, data, sid):
 
 def on_pre_tool(sdlc, p, data, sid):
     if data.get("tool_name") == "Shell":
-        remember_shell_cwd(p, sid, (data.get("tool_input") or {}).get("cwd") or data.get("cwd"))
+        tool_input = data.get("tool_input")
+        cwd = (tool_input.get("cwd") if isinstance(tool_input, dict) else None) or data.get("cwd")
+        if isinstance(cwd, str) and cwd:
+            save_shell_dirs(p, sid, [cwd])  # the shell is exactly there now
         return dict(ALLOW)
-    path = edit_path(data)
-    if path is None:
-        return dict(ALLOW)
-    out = run(sdlc.hook_pre_edit, {"session_id": sid, "cwd": p.root, "tool_name": data.get("tool_name"),
-                                   "tool_input": {"file_path": path}}, p)
-    decision, reason, note = decision_of(out)
-    if decision in ("deny", "ask"):
-        return answer("deny", reason + (MANUAL_STEP if decision == "ask" else ""))
-    if note:
-        # A pre-tool allow carries no context in Cursor: the note goes out after the edit.
+    best, notes = ("allow", ""), []
+    for path in edit_targets(data):
+        if path == "?":
+            reason = sdlc.code_gate(p, sid)
+            decision = "deny" if reason else "allow"
+            reason = ("A tool call whose target file the hook cannot read is blocked. " + reason) if reason else ""
+        else:
+            out = run(sdlc.hook_pre_edit, {"session_id": sid, "cwd": p.root, "tool_name": data.get("tool_name"),
+                                           "tool_input": {"file_path": path}}, p)
+            decision, reason, note = decision_of(out)
+            if note:
+                notes.append(note)
+        if RANK.get(decision, 2) > RANK[best[0]]:
+            best = (decision, reason)
+    if best[0] != "allow":
+        return answer("deny", best[1] + (MANUAL_STEP if best[0] == "ask" else ""))
+    if notes:
+        # A pre-tool allow carries no context in Cursor: the notes go out after the edit.
         sess = p.session(sid)
-        sess["pending_notes"] = sess.get("pending_notes", []) + [note]
+        sess["pending_notes"] = sess.get("pending_notes", []) + notes
         p.save_session(sid, sess)
     return dict(ALLOW)
 
@@ -165,29 +238,40 @@ def on_shell(sdlc, p, data, sid):
         raise ValueError("beforeShellExecution without a command")
     cwd = data.get("cwd")
     if isinstance(cwd, str) and cwd:
-        remember_shell_cwd(p, sid, cwd)
-        candidates = [cwd]
+        known = [cwd]
     else:
-        # An empty cwd: the shell may be in the root or where the agent last put it. Judge
-        # the command from both; the strictest decision wins.
-        stored = p.session(sid).get("shell_cwd")
-        candidates = [p.root] + ([stored] if stored and stored != p.root else [])
+        # An empty cwd: the shell is in the root or where an earlier call left it. Judge the
+        # command from each; the strictest decision wins.
+        known = [p.root] + [d for d in shell_dirs(p, sid) if d != p.root]
+    moved = cd_targets(command, known)
     best = ("allow", "")
-    for candidate in candidates:
+    for candidate in known + [d for d in moved if d not in known]:
         out = run(sdlc.hook_pre_bash, {"session_id": sid, "cwd": candidate, "tool_name": "Bash",
                                        "tool_input": {"command": command}}, p)
         decision, reason, _ = decision_of(out)
-        if RANK.get(decision, 0) > RANK[best[0]]:
+        if RANK.get(decision, 2) > RANK[best[0]]:
             best = (decision, reason)
-    return answer(*best) if best[0] != "allow" else dict(ALLOW)
+    later = (known if cwd else known[1:]) + [d for d in moved if d not in known]
+    save_shell_dirs(p, sid, later[-MAX_SHELL_DIRS:])
+    if best[0] == "allow":
+        return dict(ALLOW)
+    if best[0] == "ask" and not best[1].startswith(sdlc.DEPLOY_GATE):
+        return answer("deny", best[1] + MANUAL_STEP)
+    return answer(*best)
 
 
 def on_post_tool(sdlc, p, data, sid):
-    path = edit_path(data)
-    if path is None:
+    targets = edit_targets(data)
+    if not targets:
         return {}
-    run(sdlc.hook_post_edit, {"session_id": sid, "cwd": p.root, "tool_name": data.get("tool_name"),
-                              "tool_input": {"file_path": path}}, p)
+    for path in targets:
+        if path == "?":
+            sess = p.session(sid)
+            sess["dirty"] = True
+            p.save_session(sid, sess)
+            continue
+        run(sdlc.hook_post_edit, {"session_id": sid, "cwd": p.root, "tool_name": data.get("tool_name"),
+                                  "tool_input": {"file_path": path}}, p)
     sess = p.session(sid)
     notes = sess.pop("pending_notes", None)
     if not notes:
@@ -220,8 +304,8 @@ def handle(event, raw):
     data = json.loads(raw) if raw.strip() else {}
     if not isinstance(data, dict):
         raise ValueError("hook input is not a JSON object")
-    path = edit_path(data) if event in ("preToolUse", "postToolUse") else None
-    root = config_root(starts(data, path))
+    paths = edit_targets(data) if event in ("preToolUse", "postToolUse") else []
+    root = project_root(data, paths)
     if not root or event not in HANDLERS:
         return neutral(event)
     try:
@@ -240,7 +324,7 @@ def failed(event, raw, exc):
         data = json.loads(raw)
     except ValueError:
         data = {}
-    root = config_root(starts(data if isinstance(data, dict) else {}))
+    root = project_root(data if isinstance(data, dict) else {})
     if not root:
         return neutral(event)
     error = str(exc)[:200] if isinstance(exc, PolicyMissing) else "%s: %s" % (type(exc).__name__, str(exc)[:200])

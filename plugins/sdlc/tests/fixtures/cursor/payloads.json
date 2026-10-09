@@ -34,7 +34,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": null
     },
     "ide/beforeSubmitPrompt": {
@@ -61,7 +61,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": null
     },
     "ide/beforeSubmitPrompt-followup": {
@@ -88,7 +88,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
     },
     "ide/preToolUse-Write": {
@@ -107,7 +107,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
     },
     "ide/preToolUse-Shell": {
@@ -128,7 +128,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
     },
     "ide/beforeShellExecution": {
@@ -145,7 +145,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
     },
     "ide/postToolUse-Shell": {
@@ -168,7 +168,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
     },
     "ide/postToolUse-Write": {
@@ -189,7 +189,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
     },
     "ide/afterFileEdit": {
@@ -209,7 +209,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
     },
     "ide/preToolUse-Task": {
@@ -230,7 +230,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
     },
     "ide/subagentStart": {
@@ -250,7 +250,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
     },
     "ide/preToolUse-subagent-Read": {
@@ -269,7 +269,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": null
     },
     "ide/subagentStop": {
@@ -293,7 +293,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl",
       "agent_transcript_path": null
     },
@@ -324,7 +324,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
     },
     "ide/stop-loop1": {
@@ -354,7 +354,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-000000000001/00000000-0000-0000-0000-000000000001.jsonl"
     },
     "cli/preToolUse-Write-strreplace": {
@@ -373,7 +373,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000a/00000000-0000-0000-0000-00000000000a.jsonl"
     },
     "cli/preToolUse-Write-notebook": {
@@ -392,7 +392,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000a/00000000-0000-0000-0000-00000000000a.jsonl"
     },
     "cli/preToolUse-Delete": {
@@ -410,7 +410,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000a/00000000-0000-0000-0000-00000000000a.jsonl"
     },
     "cli/preToolUse-Shell-cwd": {
@@ -431,7 +431,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000b/00000000-0000-0000-0000-00000000000b.jsonl"
     },
     "cli/beforeShellExecution-cwd": {
@@ -447,7 +447,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000b/00000000-0000-0000-0000-00000000000b.jsonl"
     },
     "cli/postToolUseFailure-Shell-exit": {
@@ -472,7 +472,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000b/00000000-0000-0000-0000-00000000000b.jsonl"
     },
     "cli/postToolUseFailure-Shell-denied": {
@@ -497,7 +497,7 @@
       "workspace_roots": [
         "/WORKSPACE"
       ],
-      "user_email": "user@example.invalid",
+      "user_email": null,
       "transcript_path": "/HOME/.cursor/projects/WORKSPACE/agent-transcripts/00000000-0000-0000-0000-00000000000b/00000000-0000-0000-0000-00000000000b.jsonl"
     }
   }

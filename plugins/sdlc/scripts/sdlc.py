@@ -64,12 +64,13 @@ DEFAULTS = {
     # of HOST_CONFIG_PATHS.
     "protected_host_paths": [],
 }
-# Files that steer Cursor. Always protected, also when a project sets its own protected_paths.
-# Not all of .cursor/: plan mode writes .cursor/plans/.
-CURSOR_PROTECTED_PATHS = ["**/AGENTS.md", "**/.cursorrules", "**/.cursor/hooks.json", "**/.cursor/hooks/**",
-                          "**/.cursor/rules/**", "**/.cursor/agents/**", "**/.cursor/skills/**",
-                          "**/.cursor/commands/**", "**/.cursor/mcp.json", "**/.cursor/cli.json",
-                          "**/.cursor/environment.json", "**/.cursor/worktrees.json"]
+# Always protected, also when a project sets its own protected_paths: any sdlc.config.json (a
+# nested one could become the policy root for a host that looks up from a file or directory)
+# and the files that steer Cursor. Not all of .cursor/: plan mode writes .cursor/plans/.
+ALWAYS_PROTECTED_PATHS = ["**/" + CONFIG_NAME, "**/AGENTS.md", "**/.cursorrules", "**/.cursor/hooks.json",
+                          "**/.cursor/hooks/**", "**/.cursor/rules/**", "**/.cursor/agents/**",
+                          "**/.cursor/skills/**", "**/.cursor/commands/**", "**/.cursor/mcp.json",
+                          "**/.cursor/cli.json", "**/.cursor/environment.json", "**/.cursor/worktrees.json"]
 # Host configuration outside the repository that can add hooks or change plugins. A hook of
 # either host can send a follow-up that Cursor treats as a typed prompt, so these need the user.
 # Host memory (~/.claude/projects/) and other user files stay writable.
@@ -175,9 +176,10 @@ class Project(object):
     # -- paths
     def rel(self, path, cwd=None):
         """Repo-relative POSIX path, or None when the path is outside the repo."""
+        path = os.path.expanduser(path)  # before the join: `~/x` is in HOME, not in cwd
         if not os.path.isabs(path):
             path = os.path.join(cwd or self.root, path)
-        path = os.path.realpath(os.path.expanduser(path))
+        path = os.path.realpath(path)
         root = os.path.realpath(self.root)
         rel = os.path.relpath(path, root)
         if rel == ".." or rel.startswith(".." + os.sep):
@@ -190,7 +192,7 @@ class Project(object):
             return "state"
         if rel.startswith(self.art_rel + "/"):
             return "approvals" if rel.endswith("/approvals.json") else "artifact"
-        if matches(rel, self.cfg["protected_paths"] + CURSOR_PROTECTED_PATHS):
+        if matches(rel, self.cfg["protected_paths"] + ALWAYS_PROTECTED_PATHS):
             return "protected"
         if matches(rel, self.cfg["test_paths"]):
             return "test"
@@ -284,16 +286,29 @@ class Project(object):
     def host_config(self, path, cwd=None):
         """The reason a write to `path` needs the user when it is host configuration outside
         the repository (HOST_CONFIG_PATHS, protected_host_paths), else None."""
-        home = os.path.realpath(os.path.expanduser("~"))
+        home = os.path.expanduser("~")
         path = os.path.expanduser(HOME_VAR.sub(lambda m: home, path))
         if not os.path.isabs(path):
             path = os.path.join(cwd or self.root, path)
-        path = os.path.realpath(path)
+        # A glob (`~/.claude/*.json`) is judged by the directory it starts in.
+        parts = GLOB_CHARS.split(path, 1)
+        is_glob = len(parts) > 1
+        base = os.path.dirname(parts[0]) if is_glob else path
+        # Both spellings: a symlinked ~/.claude must not hide the file it points to.
+        targets = {os.path.normpath(base), os.path.realpath(base)}
+        homes = {os.path.normpath(home), os.path.realpath(home)}
         for pattern in HOST_CONFIG_PATHS + list(self.cfg.get("protected_host_paths") or []):
-            full = home + pattern[1:] if pattern.startswith("~/") else pattern
-            if glob_to_regex(full).match(path):
-                return ("%s is host configuration outside the repository: it can add hooks or change "
-                        "plugins, so the user must confirm this edit." % path)
+            for h in homes:
+                full = h + pattern[1:] if pattern.startswith("~/") else pattern
+                regex = glob_to_regex(full)
+                # The directory the pattern's files live in: ~/.claude for ~/.claude/settings*.json.
+                folder = os.path.dirname(GLOB_CHARS.split(full, 1)[0] + "x")
+                for t in targets:
+                    # A directory destination (`cp x ~/.claude/`) writes into that directory.
+                    into = t.startswith(h + os.sep) and (folder == t or folder.startswith(t + os.sep))
+                    if regex.match(t) or (is_glob and regex.match(t + "/x")) or into:
+                        return ("%s is host configuration outside the repository: it can add hooks or "
+                                "change plugins, so the user must confirm this edit." % t)
         return None
 
     def audit(self, event, **kw):
@@ -486,6 +501,8 @@ def check_target(p, rel, sid, via_bash=False):
 
 REDIRECT = re.compile(r"(?:^|[^<>&0-9])[0-9]*>{1,2}\|?\s*(?!&)([^\s;&|<>()]+)")
 HOME_VAR = re.compile(r"^\$(?:\{HOME\}|HOME)(?=/|$)")
+GLOB_CHARS = re.compile(r"[*?\[]")
+DEPLOY_GATE = "SDLC deploy gate: "  # host adapters keep `ask` only for this gate
 SAFE_SINKS = ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty")
 TMP_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/", "$TMPDIR", "${TMPDIR")
 INPLACE = re.compile(r"^(sed|gsed|perl|ruby)$")
@@ -935,7 +952,7 @@ def push_branches(cmd, cwd):
     return branches if seen and seen == len(GIT_PUSH.findall(cmd)) else None
 
 
-STATE_REF = re.compile(r"approvals\.json|(^|[\s/'\"=])\.sdlc(/|\b)|sdlc\w*\.py")
+STATE_REF = re.compile(r"approvals\.json|(^|[\s/'\"=])\.sdlc(/|\b)|sdlc(?:_cursor)?\.py")
 READERS = frozenset(("cat", "head", "tail", "ls", "wc", "grep", "egrep", "fgrep", "jq", "diff", "cmp",
                      "stat", "shasum", "sha256sum", "md5", "md5sum", "cksum", "cut", "tr", "nl", "echo",
                      "printf", "read", "pwd", "cd", "basename", "dirname", "realpath", "readlink", "test",
@@ -1359,13 +1376,17 @@ def hook_pre_bash(data, p):
         branches = push_branches(cmd, cwd)
         if branches and not any(matches(b, p.cfg["protected_branches"]) for b in branches):
             pattern = gated_pattern(cmd, [g for g in p.cfg["gated_commands"] if not re.search(g, "git push")])
+    deploy = None
     if pattern:
-        decision = p.cfg["gated_command_decision"]
-        p.audit("gate-" + decision, tool="Bash", command=cmd[:300], reason=pattern)
-        pre_decision(decision, "SDLC deploy gate: `%s` needs explicit user approval. Make sure "
-                               "verification passed and the PR review (skill sdlc:review) is done." % cmd[:120])
+        deploy = (DEPLOY_GATE + "`%s` needs explicit user approval. Make sure verification passed "
+                  "and the PR review (skill sdlc:review) is done." % cmd[:120])
+        if p.cfg["gated_command_decision"] != "ask":
+            p.audit("gate-" + p.cfg["gated_command_decision"], tool="Bash", command=cmd[:300], reason=pattern)
+            pre_decision(p.cfg["gated_command_decision"], deploy)
     scratch = data.get("scratchpad_dir")
-    ask = None  # a write that needs the user; any denied target in the same command wins over it
+    # A write that needs the user. A denied target in the same command wins over it, and over
+    # the deploy gate: approving the push must not let a gated write through.
+    ask = None
     for target in bash_write_targets(cmd, cwd):
         if target == "?":
             reason = code_gate(p, sid)
@@ -1391,8 +1412,11 @@ def hook_pre_bash(data, p):
             continue
         p.audit("gate-deny", tool="Bash", command=cmd[:300], path=rel, reason=reason)
         pre_decision("deny", reason + " Prefer the Edit/Write tools for file changes.")
-    if ask:
-        pre_decision("ask", ask)
+    if deploy and not ask:
+        p.audit("gate-ask", tool="Bash", command=cmd[:300], reason=pattern)
+    if ask or deploy:
+        # A file reason comes first: an adapter keeps `ask` only when the deploy gate leads.
+        pre_decision("ask", " ".join(r for r in (ask, deploy) if r))
     sys.exit(0)
 
 
