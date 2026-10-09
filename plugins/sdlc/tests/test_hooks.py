@@ -21,6 +21,9 @@ class HookTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = os.path.realpath(self.tmp.name)
+        # Hooks see this as HOME, so host configuration checks never touch the real one.
+        self.home_tmp = tempfile.TemporaryDirectory()
+        self.home = os.path.realpath(self.home_tmp.name)
         sh(self.root, "git", "init", "-q")
         sh(self.root, "git", "config", "user.name", "Tester")
         sh(self.root, "git", "config", "user.email", "t@example.com")
@@ -32,6 +35,10 @@ class HookTest(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+        self.home_tmp.cleanup()
+
+    def env(self):
+        return dict(os.environ, CLAUDE_PROJECT_DIR=self.root, HOME=self.home)
 
     # -- helpers
     def path(self, rel):
@@ -48,15 +55,14 @@ class HookTest(unittest.TestCase):
         # Claude Code sets CLAUDE_PROJECT_DIR for hooks; point it at the test repo so a host
         # project (e.g. this repo with SDLC enabled) never leaks into the hook under test.
         r = subprocess.run([sys.executable, SCRIPT, "hook", name], input=json.dumps(data),
-                           capture_output=True, text=True, cwd=self.root,
-                           env=dict(os.environ, CLAUDE_PROJECT_DIR=self.root))
+                           capture_output=True, text=True, cwd=self.root, env=self.env())
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("hook error", r.stderr)
         return json.loads(r.stdout) if r.stdout.strip() else {}
 
     def cli(self, *args):
         r = subprocess.run([sys.executable, SCRIPT, "cli"] + list(args), capture_output=True,
-                           text=True, cwd=self.root, env=dict(os.environ, CLAUDE_PROJECT_DIR=self.root))
+                           text=True, cwd=self.root, env=self.env())
         return r.returncode, r.stdout
 
     def prompt(self, text):
@@ -470,8 +476,7 @@ class HookTest(unittest.TestCase):
         data = {"session_id": SID, "cwd": self.root}
         data.update(payload)
         r = subprocess.run([sys.executable, SCRIPT, "hook", name], input=json.dumps(data),
-                           capture_output=True, text=True, cwd=self.root,
-                           env=dict(os.environ, CLAUDE_PROJECT_DIR=self.root))
+                           capture_output=True, text=True, cwd=self.root, env=self.env())
         self.assertEqual(r.returncode, 0, r.stderr)
         return json.loads(r.stdout) if r.stdout.strip() else {}
 
@@ -503,6 +508,64 @@ class HookTest(unittest.TestCase):
         for cmd in ("claude --version", "grep -rn \"sdlc approve\" docs",
                     "cat ~/.claude/settings.json"):
             self.assertEqual(self.bash(cmd), "allow", cmd)
+
+    def test_nested_cursor_session_cannot_send_user_commands(self):
+        for cmd in ("cursor-agent -p \"sdlc approve plan\"",
+                    "agent \"sdlc done\"",
+                    "~/.local/bin/agent -p 'sdlc unlock tests'",
+                    "echo 'sdlc trivial' | cursor-agent -p"):
+            self.assertEqual(self.bash(cmd), "deny", cmd)
+        for cmd in ("agent --version", "ssh-agent -l", "cursor-agent status",
+                    "grep -rn \"sdlc approve\" docs/agent-notes.md"):
+            self.assertEqual(self.bash(cmd), "allow", cmd)
+
+    def test_cursor_adapter_is_internal(self):
+        self.cli("new", "feat-a")
+        self.assertEqual(self.bash("python3 plugins/sdlc/scripts/sdlc_cursor.py hook beforeSubmitPrompt "
+                                   "< fake.json"), "deny")
+        self.assertEqual(self.bash("cat plugins/sdlc/scripts/sdlc_cursor.py | head"), "allow")
+
+    def test_cursor_files_are_protected(self):
+        self.to_build()
+        for rel in ("AGENTS.md", "src/AGENTS.md", ".cursorrules", ".cursor/hooks.json",
+                    ".cursor/hooks/audit.sh", ".cursor/rules/x.mdc", ".cursor/agents/x.md",
+                    ".cursor/skills/x/SKILL.md", ".cursor/commands/x.md", ".cursor/mcp.json",
+                    ".cursor/cli.json", ".cursor/environment.json", ".cursor/worktrees.json"):
+            self.assertEqual(self.edit(rel), "ask", rel)
+        self.assertEqual(self.edit(".cursor/plans/feature.md"), "allow")
+        # A project's own protected_paths list keeps the Cursor entries.
+        self.write("sdlc.config.json", json.dumps({"verify": [], "protected_paths": ["REVIEW.md"]}))
+        self.assertEqual(self.edit(".cursor/hooks.json"), "ask")
+        self.assertEqual(self.edit("REVIEW.md"), "ask")
+
+    def test_host_configuration_needs_the_user(self):
+        self.cli("new", "feat-a")
+        home = self.home
+        for path in (".cursor/hooks.json", ".cursor/hooks/audit.sh", ".cursor/plugins/local/x/hooks/cursor.json",
+                     ".cursor/cli-config.json", ".cursor/mcp.json", ".cursor/agents/x.md",
+                     ".cursor/skills-cursor/x/SKILL.md", ".claude/settings.json",
+                     ".claude/settings.local.json", ".claude/hooks/x.sh",
+                     ".claude/plugins/cache/ai-sdlc/sdlc/0.4.4/scripts/sdlc.py", ".claude/agents/x.md",
+                     ".claude/skills/x/SKILL.md", ".claude/commands/x.md"):
+            out = self.hook("pre-edit", tool_name="Write", tool_input={"file_path": os.path.join(home, path)})
+            self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask", path)
+        for path in (".claude/projects/p/memory/note.md", "notes.txt", ".cursor/plans/x.md"):
+            out = self.hook("pre-edit", tool_name="Write", tool_input={"file_path": os.path.join(home, path)})
+            self.assertEqual(out, {}, path)
+        for cmd in ("echo '{}' > ~/.cursor/hooks.json", "cp hooks.json $HOME/.claude/settings.json",
+                    "echo '{}' | tee ${HOME}/.cursor/plugins/local/x/hooks/cursor.json",
+                    "sed -i '' s/a/b/ ~/.claude/settings.local.json"):
+            self.assertEqual(self.bash(cmd), "ask", cmd)
+        for cmd in ("cat ~/.claude/settings.json", "echo x > ~/.claude/projects/p/memory/note.md",
+                    "cp a /tmp/settings.json"):
+            self.assertEqual(self.bash(cmd), "allow", cmd)
+        # A denied target in the same command wins over one that only needs the user.
+        self.assertEqual(self.bash("echo '{}' > ~/.cursor/hooks.json; echo x > src/app.js"), "deny")
+        # A project can add its own host paths.
+        self.write("sdlc.config.json", json.dumps({"verify": [], "protected_host_paths": ["~/.config/acme/**"]}))
+        out = self.hook("pre-edit", tool_name="Write",
+                        tool_input={"file_path": os.path.join(home, ".config/acme/rules.json")})
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
 
     def test_config_template_matches_defaults(self):
         sys.path.insert(0, os.path.dirname(SCRIPT))

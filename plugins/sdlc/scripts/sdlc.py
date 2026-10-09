@@ -60,7 +60,24 @@ DEFAULTS = {
     "protected_branches": ["main", "master", "release/*"],
     # What pre-edit and pre-bash do when the hook itself fails: "deny" (fail closed) or "allow".
     "on_hook_error": "deny",
+    # More host configuration outside the repository (`~` allowed) that needs the user, on top
+    # of HOST_CONFIG_PATHS.
+    "protected_host_paths": [],
 }
+# Files that steer Cursor. Always protected, also when a project sets its own protected_paths.
+# Not all of .cursor/: plan mode writes .cursor/plans/.
+CURSOR_PROTECTED_PATHS = ["**/AGENTS.md", "**/.cursorrules", "**/.cursor/hooks.json", "**/.cursor/hooks/**",
+                          "**/.cursor/rules/**", "**/.cursor/agents/**", "**/.cursor/skills/**",
+                          "**/.cursor/commands/**", "**/.cursor/mcp.json", "**/.cursor/cli.json",
+                          "**/.cursor/environment.json", "**/.cursor/worktrees.json"]
+# Host configuration outside the repository that can add hooks or change plugins. A hook of
+# either host can send a follow-up that Cursor treats as a typed prompt, so these need the user.
+# Host memory (~/.claude/projects/) and other user files stay writable.
+HOST_CONFIG_PATHS = ["~/.cursor/hooks.json", "~/.cursor/hooks/**", "~/.cursor/plugins/**",
+                     "~/.cursor/cli-config.json", "~/.cursor/mcp.json", "~/.cursor/agents/**",
+                     "~/.cursor/skills*/**", "~/.claude/settings*.json", "~/.claude/hooks/**",
+                     "~/.claude/plugins/**", "~/.claude/agents/**", "~/.claude/skills/**",
+                     "~/.claude/commands/**"]
 
 # --------------------------------------------------------------------------- utils
 
@@ -153,6 +170,7 @@ class Project(object):
         self.art_rel = cfg["artifacts_dir"].strip("/")
         self.art = os.path.join(root, self.art_rel)
         self.state = os.path.join(root, STATE_DIR)
+        self.host = None  # set by a host adapter; recorded in audit entries
 
     # -- paths
     def rel(self, path, cwd=None):
@@ -172,7 +190,7 @@ class Project(object):
             return "state"
         if rel.startswith(self.art_rel + "/"):
             return "approvals" if rel.endswith("/approvals.json") else "artifact"
-        if matches(rel, self.cfg["protected_paths"]):
+        if matches(rel, self.cfg["protected_paths"] + CURSOR_PROTECTED_PATHS):
             return "protected"
         if matches(rel, self.cfg["test_paths"]):
             return "test"
@@ -263,9 +281,26 @@ class Project(object):
     def save_feature_state(self, slug, data):
         write_json(self.feature_path(slug), data)
 
+    def host_config(self, path, cwd=None):
+        """The reason a write to `path` needs the user when it is host configuration outside
+        the repository (HOST_CONFIG_PATHS, protected_host_paths), else None."""
+        home = os.path.realpath(os.path.expanduser("~"))
+        path = os.path.expanduser(HOME_VAR.sub(lambda m: home, path))
+        if not os.path.isabs(path):
+            path = os.path.join(cwd or self.root, path)
+        path = os.path.realpath(path)
+        for pattern in HOST_CONFIG_PATHS + list(self.cfg.get("protected_host_paths") or []):
+            full = home + pattern[1:] if pattern.startswith("~/") else pattern
+            if glob_to_regex(full).match(path):
+                return ("%s is host configuration outside the repository: it can add hooks or change "
+                        "plugins, so the user must confirm this edit." % path)
+        return None
+
     def audit(self, event, **kw):
         os.makedirs(self.state, exist_ok=True)
         entry = {"at": now(), "event": event}
+        if self.host:
+            entry["host"] = self.host
         entry.update(kw)
         with open(os.path.join(self.state, "audit.log"), "a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -450,6 +485,7 @@ def check_target(p, rel, sid, via_bash=False):
 # ------------------------------------------------------------------ shell parsing
 
 REDIRECT = re.compile(r"(?:^|[^<>&0-9])[0-9]*>{1,2}\|?\s*(?!&)([^\s;&|<>()]+)")
+HOME_VAR = re.compile(r"^\$(?:\{HOME\}|HOME)(?=/|$)")
 SAFE_SINKS = ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty")
 TMP_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/", "$TMPDIR", "${TMPDIR")
 INPLACE = re.compile(r"^(sed|gsed|perl|ruby)$")
@@ -899,7 +935,7 @@ def push_branches(cmd, cwd):
     return branches if seen and seen == len(GIT_PUSH.findall(cmd)) else None
 
 
-STATE_REF = re.compile(r"approvals\.json|(^|[\s/'\"=])\.sdlc(/|\b)|sdlc\.py")
+STATE_REF = re.compile(r"approvals\.json|(^|[\s/'\"=])\.sdlc(/|\b)|sdlc\w*\.py")
 READERS = frozenset(("cat", "head", "tail", "ls", "wc", "grep", "egrep", "fgrep", "jq", "diff", "cmp",
                      "stat", "shasum", "sha256sum", "md5", "md5sum", "cksum", "cut", "tr", "nl", "echo",
                      "printf", "read", "pwd", "cd", "basename", "dirname", "realpath", "readlink", "test",
@@ -1011,7 +1047,9 @@ def reads_only(cmd):
 USER_CMD = re.compile(r"^\s*sdlc\s+([a-z-]+)(?:\s+(.*))?$", re.I)
 USER_ONLY = ("approve", "skip", "trivial", "unlock", "feature", "done")
 NESTED_USER_CMD = re.compile(r"\bsdlc\s+(?:%s)\b" % "|".join(USER_ONLY), re.I)
-CLAUDE_CLI = [r"\bclaude(?:-code)?\b"]
+# Agent CLIs that start a session whose prompt hook would read a user command: Claude Code and
+# Cursor (`cursor-agent`, or `agent` as a program of its own, not `ssh-agent`).
+AGENT_CLI = [r"\bclaude(?:-code)?\b", r"\bcursor-agent\b", r"(?<![\w-])agent\b"]
 
 
 def handle_user_command(p, sid, line):
@@ -1215,6 +1253,10 @@ def hook_pre_edit(data, p):
         sys.exit(0)
     rel = p.rel(path, data.get("cwd"))
     if rel is None:
+        reason = p.host_config(path, data.get("cwd"))
+        if reason:
+            p.audit("gate-ask", tool=data.get("tool_name"), path=path, reason=reason)
+            pre_decision("ask", reason)
         sys.exit(0)
     sid = data.get("session_id")
     decision, reason = check_target(p, rel, sid)
@@ -1304,10 +1346,11 @@ def hook_pre_bash(data, p):
         pre_decision("deny", "SDLC state (.sdlc/, approvals.json) is managed by hooks: shell commands "
                              "may only read it (cat, grep, jq, sed -n, git log/show) and must not run "
                              "sdlc.py. Use the `sdlc` CLI (status, new, lock-tests) or ask the user.")
-    if NESTED_USER_CMD.search(cmd) and gated_pattern(cmd, CLAUDE_CLI):
+    if NESTED_USER_CMD.search(cmd) and gated_pattern(cmd, AGENT_CLI):
         p.audit("gate-deny", tool="Bash", command=cmd[:300], reason="nested user command")
         pre_decision("deny", "User-only `sdlc` commands count only when the user types them in this "
-                             "chat; sending one through another Claude session is blocked. Ask the user.")
+                             "chat; sending one through another agent session (Claude Code or Cursor) "
+                             "is blocked. Ask the user.")
     cwd = data.get("cwd") or p.root
     pattern = gated_pattern(cmd, p.cfg["gated_commands"])
     if pattern and re.search(pattern, "git push"):
@@ -1322,6 +1365,7 @@ def hook_pre_bash(data, p):
         pre_decision(decision, "SDLC deploy gate: `%s` needs explicit user approval. Make sure "
                                "verification passed and the PR review (skill sdlc:review) is done." % cmd[:120])
     scratch = data.get("scratchpad_dir")
+    ask = None  # a write that needs the user; any denied target in the same command wins over it
     for target in bash_write_targets(cmd, cwd):
         if target == "?":
             reason = code_gate(p, sid)
@@ -1329,18 +1373,26 @@ def hook_pre_bash(data, p):
                 pre_decision("deny", "A shell write whose target the hook cannot read (a patch, an "
                                      "in-place edit with no file) is blocked. " + reason)
             continue
+        target = HOME_VAR.sub(lambda m: os.path.expanduser("~"), target)
         if scratch and os.path.abspath(os.path.join(cwd, target)).startswith(os.path.abspath(scratch)):
             continue
         rel = p.rel(target, cwd)
         if rel is None:
+            reason = p.host_config(target, cwd)
+            if reason and not ask:
+                p.audit("gate-ask", tool="Bash", command=cmd[:300], path=target, reason=reason)
+                ask = reason
             continue
         decision, reason = check_target(p, rel, sid, via_bash=True)
         if decision == "allow":
             continue
         if decision == "ask":
-            pre_decision("ask", reason)
+            ask = ask or reason
+            continue
         p.audit("gate-deny", tool="Bash", command=cmd[:300], path=rel, reason=reason)
         pre_decision("deny", reason + " Prefer the Edit/Write tools for file changes.")
+    if ask:
+        pre_decision("ask", ask)
     sys.exit(0)
 
 
