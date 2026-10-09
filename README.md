@@ -1,20 +1,25 @@
 # claude-sdlc
 
-A Claude Code plugin that puts the agent on the rails of Anthropic's
+A plugin for Claude Code and Cursor that puts the agent on the rails of Anthropic's
 [AI-native SDLC playbook](https://academy.claude.com/courses/ai-native-sdlc-playbook/introduction):
 
 **Intent → Spec → Plan → Build → Verify → Review → Maintain**, with human approval gates
 that are enforced by hooks, not just requested in a prompt.
+
+Both hosts share the policy, the artifacts and the approvals, so a person in Claude Code
+and a person in Cursor follow one process in one repository. See [Cursor](#cursor) for what
+differs there.
 
 ## Layers
 
 | Layer | Where | Role |
 |-------|-------|------|
 | Hooks | `plugins/sdlc/hooks/hooks.json`, `scripts/sdlc.py` | Deterministic gates. The agent cannot skip them |
+| Cursor adapter | `plugins/sdlc/hooks/cursor.json`, `scripts/sdlc_cursor.py` | Runs the same gates in Cursor: maps Cursor hook events to the handlers in `sdlc.py` |
 | Skills | `plugins/sdlc/skills/*` | Per-stage playbooks and templates, loaded on demand |
 | Agent | `plugins/sdlc/agents/sdlc-reviewer.md` | Independent read-only reviewer for stage 5 |
 | UI | `plugins/sdlc/hooks/ui.tsx` | A band above the prompt and `SDLC` in the footer: state, next action, approvals by button. Shows state; enforces nothing |
-| CLAUDE.md section | added by `/sdlc:init` | Short always-on rules for the repository |
+| CLAUDE.md / AGENTS.md section | added by `/sdlc:init` | Short always-on rules for the repository (`AGENTS.md` for Cursor) |
 | `sdlc.config.json` | repo root | Opt-in switch plus verify commands. Without it the plugin does nothing |
 
 ## Gates
@@ -25,9 +30,10 @@ that are enforced by hooks, not just requested in a prompt.
 | Approvals | `UserPromptSubmit` | Only a real user message `sdlc approve <stage>` records an approval (sha256 of the artifact, author, time) in `docs/sdlc/<feature>/approvals.json` |
 | Stage order | `PreToolUse` Edit/Write | `spec.md` needs an approved intent. `plan.md` needs an approved (or skipped) spec |
 | Code gate | `PreToolUse` Edit/Write/Bash | Code changes need an approved intent, spec and plan whose hashes still match. Editing an approved artifact reopens its approval |
-| Self-approval | `PreToolUse` | The agent cannot write `approvals.json` or `.sdlc/`, call the hook script directly, or send user commands (`sdlc approve ...`) through a nested `claude` session. Reading them (`cat`, `grep`, `jq`, `git log`) is allowed |
+| Self-approval | `PreToolUse` | The agent cannot write `approvals.json` or `.sdlc/`, call the hook scripts directly, or send user commands (`sdlc approve ...`) through a nested `claude`, `cursor-agent` or `agent` session. Reading them (`cat`, `grep`, `jq`, `git log`) is allowed |
 | Test lock | `PreToolUse` | After `sdlc lock-tests` (bug-fix flow) test files are read-only until the user unlocks them |
-| Protected files | `PreToolUse` | Files that steer the agent need user confirmation (`ask`): `CLAUDE.md` and `CLAUDE.local.md` in any directory, `.claude/` settings, hooks, agents, skills, commands, rules and output styles, `.mcp.json`, `REVIEW.md`, `sdlc.config.json` |
+| Protected files | `PreToolUse` | Files that steer the agent need user confirmation (`ask`): `CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` in any directory, `.claude/` settings, hooks, agents, skills, commands, rules and output styles, `.cursorrules`, `.cursor/` hooks, rules, agents, skills, commands, `mcp.json`, `cli.json`, `environment.json` and `worktrees.json`, `.mcp.json`, `REVIEW.md`, `sdlc.config.json`. The Cursor entries apply also when a project sets its own `protected_paths` |
+| Host configuration | `PreToolUse` | Writes outside the repository to configuration that can add hooks or change plugins need user confirmation: `hooks.json`, `hooks/`, `plugins/`, `cli-config.json`, `mcp.json`, agents and skills under `~/.cursor/`; `settings*.json`, `hooks/`, `plugins/`, agents, skills and commands under `~/.claude/`. `protected_host_paths` in `sdlc.config.json` adds more. Memory (`~/.claude/projects/`) and other files stay writable |
 | Deploy gate | `PreToolUse` Bash | `gh pr merge`, publish and deploy commands need user confirmation (`ask`). So does a `git push` to a protected branch (`protected_branches`: `main`, `master`, `release/*`), with force, delete, tags or mirror, or one the hook cannot read. A push that only updates other branches passes: the PR and branch protection guard the rest |
 | Plan drift | `PreToolUse` Edit/Write | In build, an edit to a code or test file that `plan.md` does not list under *Files affected* gets a note, once per file and session: add the file to the plan and re-approve, or undo the edit. It does not block |
 | Definition of Done | `Stop` | If code changed in the session, the `verify` commands run; a failure sends the agent back (max 2 retries per state) |
@@ -188,6 +194,80 @@ repository has to commit that file, and a person can still delete it (the hook o
 the hooks guard the agent, not the people: anything that reaches the branch another way is
 caught only by branch protection and human review.
 
+## Cursor
+
+The same plugin directory works in Cursor: `plugins/sdlc/.cursor-plugin/plugin.json`
+selects `hooks/cursor.json`, and `scripts/sdlc_cursor.py` maps Cursor's hook events to the
+handlers in `sdlc.py`. Skills keep their names (`/sdlc:intent`, `/sdlc:plan`, ...), and
+`sdlc-reviewer` is a Cursor subagent. There is no Cursor UI: no SDLC bar, buttons or toasts.
+
+Requirements: macOS, Cursor IDE (tested with 3.24.9; the Cursor CLI 2026.10.01 is best
+effort), `python3` (3.9+) and `git`.
+
+### Install and update
+
+Cursor loads a local plugin from `~/.cursor/plugins/local/<name>`. A symlink loads only
+when it points inside that folder, so clone the repository there and link the plugin:
+
+```bash
+git clone https://github.com/Sennjen/claude-sdlc.git ~/.cursor/plugins/local/.src/claude-sdlc
+```
+
+```bash
+ln -s .src/claude-sdlc/plugins/sdlc ~/.cursor/plugins/local/sdlc
+```
+
+Then run **Developer: Reload Window** (or restart Cursor). On Cursor Teams and Enterprise,
+the admin setting **Allow Local Plugin Imports** must be on. To update:
+
+```bash
+git -C ~/.cursor/plugins/local/.src/claude-sdlc pull
+```
+
+and reload the window again.
+
+To enable the SDLC in a repository, run `/sdlc:init` in the agent chat and choose Cursor
+(or both hosts). For a repository that already has `sdlc.config.json`, init only adds the
+SDLC section to `AGENTS.md`. That file is protected by then, so Cursor blocks the edit and
+shows you the section to paste.
+
+Check it works: in an enabled repository, type `sdlc status` in the agent chat. Cursor
+shows the status, and the message never reaches the model.
+
+### What differs from Claude Code
+
+| | Claude Code | Cursor |
+|-|-------------|--------|
+| `[SDLC]` status | Every prompt | Every prompt; at session start only in `agent -p` |
+| User commands (`sdlc approve ...`) | Typed message | Typed message; not in `agent -p` (no prompt hook there) |
+| Protected files, host configuration | Asks you | Blocked: Cursor ignores `ask` for tool calls, so you make the edit yourself |
+| Deploy and push gate | Asks you | Asks you in the IDE; `agent --force` runs the command without asking |
+| Definition of Done | Stop hook | Stop hook follow-up; not in `agent -p` |
+| Notes about plan drift or a new active feature | Before the edit | Right after the edit |
+| Review verdict, PR link, SDLC bar | Yes | No |
+| Test unlock request | `request_test_unlock` tool and the bar | You type `sdlc unlock tests` |
+| Fast-track (`sdlc trivial`) in subagents | Yes | No: a Cursor subagent has its own session and meets the code gate |
+| A hook that crashes or times out | Gating hooks deny | Gating hooks deny (`failClosed`) |
+
+### Limits in Cursor
+
+- The edit gate covers Cursor's `Write` (also used for targeted and notebook edits) and
+  `Delete` tools, and any other non-read tool whose input names a file. Only the Auto model
+  was tested; another model may use an edit tool that Cursor reports differently.
+- Cursor's shell keeps its directory between calls but reports it only when the agent sets
+  it. A relative write target is judged from the repository root and from the last
+  directory the agent set; a `cd` in an earlier call is not tracked.
+- In a multi-root workspace, the root that contains `sdlc.config.json` is gated; the others
+  are not.
+- In Cursor IDE a stop-hook follow-up reaches the prompt hook like a typed message. That is
+  why every hook and plugin file of both hosts is protected (see *Host configuration*).
+- Cursor imports Claude Code plugins' skills by default. On a machine with both plugins you
+  see each `sdlc:*` skill twice; the Claude plugin's hooks are not imported. Accept the
+  duplicates or turn off Cursor Settings → Agents → Third-Party Imports.
+- Cursor relies on undocumented behaviour (context from the prompt hook, the follow-up path,
+  the `${CURSOR_PLUGIN_ROOT}` expansion). After a Cursor update, check that a blocked edit
+  is still blocked.
+
 ## Artifacts
 
 ```
@@ -242,6 +322,9 @@ docs/sdlc/<feature>/
   *Files affected* table (or a list in that section). A plan that names files another way gets
   no note.
 - The Stop gate runs the verify commands itself, so keep them fast.
+- Shell deletes (`rm`) are not gated in either host; Cursor's `Delete` tool is.
+- The host configuration check sees edit tools and recognized shell writes, with `~`,
+  `$HOME` and `${HOME}` expanded. A script that writes there is not seen.
 - On Claude Code 2.1.291 a hook's `ask` holds in `bypassPermissions` mode too:
   `claude -p --dangerously-skip-permissions` denies the gated call, so an interactive session
   should show the prompt. Older versions may not; set `"gated_command_decision": "deny"` if
@@ -252,6 +335,9 @@ docs/sdlc/<feature>/
 ```bash
 cd plugins/sdlc && python3 -m unittest discover -s tests -v
 ```
+
+`tests/test_cursor_hooks.py` runs the Cursor adapter on sanitized payloads that Cursor IDE
+and CLI sent (`tests/fixtures/cursor/payloads.json`).
 
 The UI module has its own tests and type check (Claude Code 2.1.284+, TypeScript 5.4+):
 
