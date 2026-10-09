@@ -1,6 +1,6 @@
 {
   "name": "ai-sdlc",
-  "description": "AI-native SDLC workflow plugins for Claude Code.",
+  "description": "AI-native SDLC workflow plugins for Claude Code and Cursor.",
   "owner": {
     "name": "Yevhenii Dziubenko"
   },

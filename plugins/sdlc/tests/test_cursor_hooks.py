@@ -301,5 +301,53 @@ class CursorHookTest(unittest.TestCase):
         self.assertEqual(out, {"permission": "allow"})
 
 
+class CursorPackageTest(unittest.TestCase):
+    PLUGIN = os.path.dirname(HERE)
+    REPO = os.path.dirname(os.path.dirname(PLUGIN))
+
+    def load(self, *parts):
+        with open(os.path.join(*parts)) as f:
+            return json.load(f)
+
+    def test_manifest_selects_the_cursor_hooks(self):
+        manifest = self.load(self.PLUGIN, ".cursor-plugin", "plugin.json")
+        claude = self.load(self.PLUGIN, ".claude-plugin", "plugin.json")
+        self.assertEqual(manifest["name"], "sdlc")
+        self.assertEqual(manifest["version"], claude["version"])
+        # Without this field Cursor reads hooks/hooks.json (Claude format) and skips its entries.
+        self.assertEqual(manifest["hooks"], "./hooks/cursor.json")
+        market = self.load(self.REPO, ".cursor-plugin", "marketplace.json")
+        self.assertEqual([(p["name"], p["source"]) for p in market["plugins"]], [("sdlc", "plugins/sdlc")])
+
+    def test_hook_commands(self):
+        sys.path.insert(0, SCRIPTS)
+        import sdlc_cursor
+        hooks = self.load(self.PLUGIN, "hooks", "cursor.json")
+        self.assertEqual(hooks["version"], 1)
+        self.assertEqual(set(hooks["hooks"]), set(sdlc_cursor.HANDLERS))
+        for event, entries in hooks["hooks"].items():
+            self.assertEqual(len(entries), 1, event)
+            entry = entries[0]
+            # The process variable CURSOR_PLUGIN_ROOT can name another plugin, and relative
+            # commands do not run for stop: only Cursor's own ${CURSOR_PLUGIN_ROOT} is safe.
+            self.assertEqual(entry["command"],
+                             'python3 "${CURSOR_PLUGIN_ROOT}/scripts/sdlc_cursor.py" hook ' + event)
+            self.assertEqual(entry.get("failClosed", False), event in sdlc_cursor.GATING, event)
+        self.assertGreaterEqual(hooks["hooks"]["stop"][0]["timeout"], 1200)
+        self.assertEqual(hooks["hooks"]["stop"][0]["loop_limit"], 3)
+        # With failClosed, a broken adapter blocks what it matches: reads stay outside the matcher.
+        for event in ("preToolUse", "postToolUse"):
+            matcher = re.compile(hooks["hooks"][event][0]["matcher"])
+            for tool in sdlc_cursor.READ_ONLY_TOOLS:
+                self.assertIsNone(matcher.search(tool), (event, tool))
+            for tool in ("Write", "Delete", "Shell", "ApplyEdit", "MCP:fs_write", "ReadWrite"):
+                self.assertIsNotNone(matcher.search(tool), (event, tool))
+
+    def test_claude_hooks_stay_claude_only(self):
+        hooks = self.load(self.PLUGIN, "hooks", "hooks.json")
+        self.assertNotIn("preToolUse", hooks["hooks"])
+        self.assertIn("PreToolUse", hooks["hooks"])
+
+
 if __name__ == "__main__":
     unittest.main()

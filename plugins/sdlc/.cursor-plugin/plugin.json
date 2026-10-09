@@ -1,0 +1,9 @@
+{
+  "name": "sdlc",
+  "version": "0.4.4",
+  "description": "AI-native SDLC (Anthropic playbook) for Cursor: intent -> spec -> plan -> build -> verify -> review -> maintain, with hook-enforced human approval gates. Inert without sdlc.config.json.",
+  "author": { "name": "Yevhenii Dziubenko" },
+  "license": "MIT",
+  "keywords": ["sdlc", "workflow", "governance", "hooks", "tdd", "review"],
+  "hooks": "./hooks/cursor.json"
+}

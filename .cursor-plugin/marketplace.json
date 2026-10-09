@@ -1,0 +1,12 @@
+{
+  "name": "ai-sdlc",
+  "owner": { "name": "Yevhenii Dziubenko" },
+  "metadata": { "description": "AI-native SDLC workflow plugins for Claude Code and Cursor." },
+  "plugins": [
+    {
+      "name": "sdlc",
+      "source": "plugins/sdlc",
+      "description": "AI-native SDLC with hook-enforced approval gates."
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      { "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/sdlc_cursor.py\" hook sessionStart", "timeout": 20 }
+    ],
+    "beforeSubmitPrompt": [
+      { "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/sdlc_cursor.py\" hook beforeSubmitPrompt", "timeout": 20 }
+    ],
+    "preToolUse": [
+      { "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/sdlc_cursor.py\" hook preToolUse", "timeout": 15, "failClosed": true,
+        "matcher": "^(?!(?:Read|Grep|Glob|LS|Task|WebFetch|WebSearch|SemanticSearch|ReadLints)$)" }
+    ],
+    "beforeShellExecution": [
+      { "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/sdlc_cursor.py\" hook beforeShellExecution", "timeout": 15, "failClosed": true }
+    ],
+    "postToolUse": [
+      { "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/sdlc_cursor.py\" hook postToolUse", "timeout": 15,
+        "matcher": "^(?!(?:Read|Grep|Glob|LS|Task|WebFetch|WebSearch|SemanticSearch|ReadLints)$)" }
+    ],
+    "stop": [
+      { "command": "python3 \"${CURSOR_PLUGIN_ROOT}/scripts/sdlc_cursor.py\" hook stop", "timeout": 1200, "loop_limit": 3 }
+    ]
+  }
+}
