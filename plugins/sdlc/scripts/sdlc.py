@@ -142,7 +142,8 @@ def glob_to_regex(pattern):
         else:
             out.append(re.escape(pattern[i]))
             i += 1
-    return re.compile("^" + "".join(out) + "$")
+    # Case-insensitive: on macOS (APFS) `.CURSOR/hooks.json` is `.cursor/hooks.json`.
+    return re.compile("^" + "".join(out) + "$", re.I)
 
 
 def matches(rel, patterns):
@@ -189,12 +190,13 @@ class Project(object):
 
     def classify(self, rel):
         """state | approvals | artifact | protected | test | docs | code"""
-        if rel == STATE_DIR or rel.startswith(STATE_DIR + "/"):
+        low = rel.lower()  # paths compare case-insensitively, as on macOS (APFS)
+        if low == STATE_DIR or low.startswith(STATE_DIR + "/"):
             return "state"
         if matches(rel, ALWAYS_PROTECTED_PATHS):  # also inside the artifacts directory
             return "protected"
-        if rel.startswith(self.art_rel + "/"):
-            return "approvals" if rel.endswith("/approvals.json") else "artifact"
+        if low.startswith(self.art_rel.lower() + "/"):
+            return "approvals" if low.endswith("/approvals.json") else "artifact"
         if matches(rel, self.cfg["protected_paths"]):
             return "protected"
         if matches(rel, self.cfg["test_paths"]):
@@ -294,21 +296,20 @@ class Project(object):
         if not os.path.isabs(path):
             path = os.path.join(cwd or self.root, path)
         parts = GLOB_CHARS.split(path, 1)
-        if len(parts) == 1:
-            hit = self.host_target(path)
-        else:
-            # A glob (`~/.claude/*.json`): the directory it starts in, and every path it matches.
-            hit = self.host_target(os.path.dirname(parts[0]), below=True)
-            for match in glob.glob(path)[:200]:
-                hit = hit or self.host_target(match)
+        # A glob (`~/.claude/*.json`, `~/.cu*/plugins/`) is judged by the directory it starts in,
+        # by its text only: expanding an agent's glob on disk could outlast the hook timeout.
+        hit = self.host_target(path) if len(parts) == 1 else \
+            self.host_target(os.path.dirname(parts[0]), below=True)
         if hit:
             return ("%s is host configuration outside the repository: it can add hooks or change "
                     "plugins, so the user must confirm this edit." % hit)
         return None
 
     def host_target(self, path, below=False):
-        """The spelling of an absolute path that is host configuration, or None. With `below`,
-        a path anywhere under `path` counts too."""
+        """The spelling of an absolute path that is host configuration, or None. With `below`
+        (the directory a glob starts in), a path anywhere under `path` counts too, and so does
+        any directory that holds host configuration, the home directory and `/` included.
+        Paths compare case-insensitively, as on macOS (APFS)."""
         home = os.path.expanduser("~")
         targets = {os.path.normpath(path), os.path.realpath(path)}
         homes = {os.path.normpath(home), os.path.realpath(home)}
@@ -317,16 +318,19 @@ class Project(object):
                 full = h + pattern[1:] if pattern.startswith("~/") else pattern
                 # The directory the pattern's files live in (~/.claude for ~/.claude/settings*.json),
                 # also where a symlink puts it, and the files a pattern names behind symlinks
-                # (dotfiles): writing through the resolved path is the same write.
+                # (dotfiles): writing through the resolved path is the same write. The pattern
+                # is ours, so listing its matches stays small.
                 folder = os.path.dirname(GLOB_CHARS.split(full, 1)[0] + "x")
                 real_folder = os.path.realpath(folder)
                 regexes = [glob_to_regex(f) for f in {full, real_folder + full[len(folder):]}]
-                resolved = {os.path.realpath(m) for m in glob.glob(full)[:200]}
+                resolved = {os.path.realpath(m).lower() for m in glob.glob(full)[:200]}
                 for t in targets:
-                    if t in resolved or any(r.match(t) or (below and r.match(t + "/x")) for r in regexes):
+                    if t.lower() in resolved or any(r.match(t) or (below and r.match(t + "/x")) for r in regexes):
                         return t
                     # A directory destination (`cp x ~/.claude/`) writes into that directory.
-                    if any(t.startswith(h + os.sep) and (f == t or f.startswith(t + os.sep))
+                    low = t.lower().rstrip(os.sep)
+                    if any((below or low.startswith(h.lower() + os.sep))
+                           and (f.lower() == low or f.lower().startswith(low + os.sep))
                            for f in (folder, real_folder)):
                         return t
         return None
@@ -492,8 +496,8 @@ def check_target(p, rel, sid, via_bash=False):
                         "in chat. Ask the user to approve.")
     if kind == "artifact":
         parts = rel[len(p.art_rel) + 1:].split("/")
-        if len(parts) == 2 and parts[1] in ("spec.md", "plan.md"):
-            slug, name = parts
+        if len(parts) == 2 and parts[1].lower() in ("spec.md", "plan.md"):
+            slug, name = parts[0], parts[1].lower()
             approvals = p.approvals(slug)
             if p.stage_state(slug, "intent", approvals) != "approved":
                 return "deny", ("intent.md of `%s` is not approved. Ask the user to review it and "
@@ -522,7 +526,16 @@ def check_target(p, rel, sid, via_bash=False):
 REDIRECT = re.compile(r"(?:^|[^<>&0-9])[0-9]*>{1,2}\|?\s*(?!&)([^\s;&|<>()]+)")
 HOME_VAR = re.compile(r"^\$(?:\{HOME\}|HOME)(?=/|$)")
 GLOB_CHARS = re.compile(r"[*?\[]")
-DEPLOY_GATE = "SDLC deploy gate: "  # host adapters keep `ask` only for this gate
+DEPLOY_GATE = "SDLC deploy gate: "
+
+
+def deploy_reason(cmd):
+    """The deploy gate's reason for `cmd`. Host adapters keep `ask` only for this exact text:
+    a prefix check could be met by a file name the agent picks."""
+    return (DEPLOY_GATE + "`%s` needs explicit user approval. Make sure verification passed and "
+            "the PR review (skill sdlc:review) is done." % cmd[:120])
+
+
 SAFE_SINKS = ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty")
 TMP_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/", "$TMPDIR", "${TMPDIR")
 INPLACE = re.compile(r"^(sed|gsed|perl|ruby)$")
@@ -716,7 +729,20 @@ def segment_targets(seg, tokens, quoted, cwd=None, can_stat=False):
     elif prog in ("cp", "mv", "install", "rsync", "ln") and args:
         positional = [a for a in args if not a.startswith("-")]
         if len(positional) >= 2:
-            targets.append(positional[-1])
+            dest = positional[-1]
+            targets.append(dest)
+            # Into a directory (`cp -R evil/.claude ~`), each source lands as dest/<its name>:
+            # judge that path too. A source given by its contents (`dir/`) or a glob lands
+            # under names the hook cannot know: dest/* stands for them.
+            text = literal(dest)
+            into = (text.endswith("/") or text in ("~", ".", "$HOME", "${HOME}")
+                    or os.path.isdir(os.path.join(cwd or os.getcwd(), os.path.expanduser(text))))
+            if into:
+                base = dest.rstrip("/") or dest
+                for src in positional[:-1]:
+                    name = literal(src).rstrip("/")
+                    unknown = literal(src).endswith("/") or GLOB_CHARS.search(name) or not name
+                    targets.append(base + "/" + ("*" if unknown else os.path.basename(name)))
     elif prog in ("patch",) or (prog == "git" and args[:1] == ["apply"]):
         targets.append("?")
     elif prog in ("touch", "truncate"):
@@ -764,7 +790,11 @@ def bash_write_targets(cmd, cwd=None):
     for t in targets:
         t = t.strip("'\"")
         readings = [t]
-        if t.startswith("~") or HOME_VAR.match(t):
+        if t.startswith(("~+", "~-")):
+            # $PWD is the command's directory; $OLDPWD is unknown to the hook.
+            rest = t[2:].lstrip("/")
+            readings = ([os.path.join(cwd or ".", rest)] if t.startswith("~+") else ["?", rest or "."]) + ["./" + t]
+        elif t.startswith("~") or HOME_VAR.match(t):
             # The shell expands ~ and $HOME only when they are not quoted, and the quotes are
             # gone here: judge both readings. The literal one stays relative ("./~/x"), and is
             # not normalized, so `~/..` cannot fold into a path that skips the home directory.
@@ -980,7 +1010,7 @@ def push_branches(cmd, cwd):
     return branches if seen and seen == len(GIT_PUSH.findall(cmd)) else None
 
 
-STATE_REF = re.compile(r"approvals\.json|(^|[\s/'\"=])\.sdlc(/|\b)|sdlc(?:_cursor)?\.py")
+STATE_REF = re.compile(r"approvals\.json|(^|[\s/'\"=])\.sdlc(/|\b)|sdlc(?:_cursor)?\.py", re.I)
 READERS = frozenset(("cat", "head", "tail", "ls", "wc", "grep", "egrep", "fgrep", "jq", "diff", "cmp",
                      "stat", "shasum", "sha256sum", "md5", "md5sum", "cksum", "cut", "tr", "nl", "echo",
                      "printf", "read", "pwd", "cd", "basename", "dirname", "realpath", "readlink", "test",
@@ -1406,8 +1436,7 @@ def hook_pre_bash(data, p):
             pattern = gated_pattern(cmd, [g for g in p.cfg["gated_commands"] if not re.search(g, "git push")])
     deploy = None
     if pattern and p.cfg["gated_command_decision"] != "allow":
-        deploy = (DEPLOY_GATE + "`%s` needs explicit user approval. Make sure verification passed "
-                  "and the PR review (skill sdlc:review) is done." % cmd[:120])
+        deploy = deploy_reason(cmd)
         if p.cfg["gated_command_decision"] == "deny":
             p.audit("gate-deny", tool="Bash", command=cmd[:300], reason=pattern)
             pre_decision("deny", deploy)
@@ -1441,10 +1470,11 @@ def hook_pre_bash(data, p):
             continue
         p.audit("gate-deny", tool="Bash", command=cmd[:300], path=rel, reason=reason)
         pre_decision("deny", reason + " Prefer the Edit/Write tools for file changes.")
-    if deploy and not ask:
+    if deploy:
         p.audit("gate-ask", tool="Bash", command=cmd[:300], reason=pattern)
     if ask or deploy:
-        # A file reason comes first: an adapter keeps `ask` only when the deploy gate leads.
+        # An adapter keeps `ask` only when the reason is exactly deploy_reason(cmd): any file
+        # reason in front of it makes the call a write that needs the user.
         pre_decision("ask", " ".join(r for r in (ask, deploy) if r))
     sys.exit(0)
 

@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -613,6 +614,35 @@ class HookTest(unittest.TestCase):
         out = self.hook("pre-edit", tool_name="Write", tool_input={"file_path": real})
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
 
+    def test_globs_are_judged_by_text(self):
+        self.cli("new", "feat-a")
+        # Expanding this glob on disk would outlast the hook timeout, and Claude Code runs a
+        # call whose hook timed out: the hook must answer from the text alone.
+        start = time.time()
+        self.assertEqual(self.bash("cp /dev/null /*/*/*/*/*/*/*/zzz; echo x > src/app.js"), "deny")
+        self.assertLess(time.time() - start, 5)
+
+    def test_paths_compare_case_insensitively(self):
+        # On macOS (APFS) these name the protected files themselves.
+        self.cli("new", "feat-a")
+        self.assertEqual(self.edit("docs/sdlc/feat-a/Approvals.json"), "deny")
+        self.assertEqual(self.edit("docs/sdlc/feat-a/Spec.md"), "deny")
+        self.assertEqual(self.edit(".SDLC/active"), "deny")
+        self.assertEqual(self.bash("rm .SDLC/tests-locked"), "deny")
+        self.to_build()
+        for rel in (".CURSOR/hooks.json", "Agents.md", "src/Claude.md"):
+            self.assertEqual(self.edit(rel), "ask", rel)
+        out = self.hook("pre-edit", tool_name="Write",
+                        tool_input={"file_path": os.path.join(self.home, ".CURSOR", "hooks.json")})
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
+
+    def test_copies_into_directories(self):
+        self.to_build()
+        for cmd in ("cp -R evil/.claude ~", "rsync -a dotfiles/ ~/", "cp -R x/.cursor $HOME",
+                    "echo '{}' > ~+/.mcp.json"):
+            self.assertEqual(self.bash(cmd), "ask", cmd)
+        self.assertEqual(self.bash("cp report.pdf ~/"), "allow")
+
     def test_always_protected_inside_artifacts(self):
         self.cli("new", "feat-a")
         for rel in ("docs/sdlc/feat-a/sdlc.config.json", "docs/sdlc/feat-a/AGENTS.md"):
@@ -628,8 +658,9 @@ class HookTest(unittest.TestCase):
         self.to_build()
         self.assertEqual(self.bash("git push origin main && echo x > CLAUDE.md"), "ask")
         with open(self.path(".sdlc/audit.log")) as f:
-            last = [json.loads(line) for line in f][-1]
-        self.assertEqual((last["event"], last.get("path")), ("gate-ask", "CLAUDE.md"))
+            last = [json.loads(line) for line in f][-2:]
+        self.assertEqual([(e["event"], e.get("path")) for e in last], [("gate-ask", "CLAUDE.md"), ("gate-ask", None)])
+        self.assertTrue(last[1]["reason"])  # the deploy gate's pattern
 
     def test_strictest_decision_in_one_command(self):
         self.cli("new", "feat-a")

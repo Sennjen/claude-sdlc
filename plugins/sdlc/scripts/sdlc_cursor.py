@@ -29,7 +29,7 @@ PATCH_START = "*** Begin Patch"
 DIFF_FILE = re.compile(r"^(?:\+\+\+|---) (?:[ab]/)?(\S+)", re.M)  # unified diff headers
 DIFF_HUNK = re.compile(r"^@@ ", re.M)
 # A `cd` the shell runs: Cursor's shell keeps its directory for later calls.
-CD = re.compile(r"(?:^|[;&|(\n]\s*)cd\s+(?:--\s+)?([^\s;&|()]+)")
+CD = re.compile(r"(?:^|[;&|({\n]|\b(?:then|do|else))\s*cd\s+(?:--\s+)?([^\s;&|(){}]+)")
 # Cursor ignores "ask" for tool calls, and its CLI runs a shell "ask" without a prompt under
 # --force, so a write that needs a person is a denial. Only the deploy gate keeps "ask".
 MANUAL_STEP = (" Cursor cannot ask for confirmation here, so the call is blocked: ask the user "
@@ -174,15 +174,18 @@ def save_shell_dirs(p, sid, dirs):
 
 
 def cd_targets(command, bases):
-    """Directories the command's literal `cd` calls lead to, from each possible start."""
-    out = []
+    """Directories the command's literal `cd` calls lead to. Each `cd` starts from every
+    directory the shell may be in by then, the targets of the earlier ones included."""
+    out, here = [], list(bases)
     for word in CD.findall(command):
         word = word.strip("'\"")
         if not word or word == "-" or re.search(r"[$`*?\[]", word):
             continue  # a variable, a substitution or a glob: not a directory the hook can name
         word = os.path.expanduser(word)
-        for base in bases:
+        for base in list(here):
             target = os.path.normpath(word if os.path.isabs(word) else os.path.join(base, word))
+            if target not in here:
+                here.append(target)
             if target not in out:
                 out.append(target)
     return out
@@ -254,7 +257,7 @@ def on_shell(sdlc, p, data, sid):
         out = run(sdlc.hook_pre_bash, {"session_id": sid, "cwd": candidate, "tool_name": "Bash",
                                        "tool_input": {"command": command}}, p)
         decision, reason, _ = decision_of(out)
-        if decision == "ask" and not reason.startswith(sdlc.DEPLOY_GATE):
+        if decision == "ask" and reason != sdlc.deploy_reason(command):
             # A write that needs a person: map it before ranking, so a deploy-only ask from
             # another directory cannot hide it.
             decision, reason = "deny", reason + MANUAL_STEP

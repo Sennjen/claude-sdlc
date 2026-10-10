@@ -248,7 +248,8 @@ shows the status, and the message never reaches the model.
 | Review verdict, PR link, SDLC bar | Yes | No |
 | Test unlock request | `request_test_unlock` tool and the bar | You type `sdlc unlock tests` |
 | Fast-track (`sdlc trivial`) in subagents | Yes | No: a Cursor subagent has its own session and meets the code gate |
-| A hook that crashes or times out | Gating hooks deny | Gating hooks deny (`failClosed`) |
+| A gating hook that crashes | The call is denied | The call is denied (`failClosed`) |
+| A gating hook that times out | The call runs | The call is denied (`failClosed`) |
 
 ### Limits in Cursor
 
@@ -330,6 +331,12 @@ docs/sdlc/<feature>/
   no note.
 - The Stop gate runs the verify commands itself, so keep them fast.
 - Shell deletes (`rm`) are not gated in either host; Cursor's `Delete` tool is.
+- Paths compare case-insensitively, as on macOS (APFS): `.CURSOR/hooks.json` and
+  `Approvals.json` are the protected files. On a case-sensitive file system this is
+  stricter than needed.
+- A glob in a write target outside the repository is judged by its text: if the directory
+  it starts in holds host configuration (the home directory or `/` included), the write
+  needs the user. The hook never expands it on disk.
 - The host configuration check sees edit tools and recognized shell writes. A shell target
   that starts with `~`, `$HOME` or `${HOME}` is judged twice, expanded and as written (the
   shell keeps it as written inside quotes), and the stricter decision wins. A script that

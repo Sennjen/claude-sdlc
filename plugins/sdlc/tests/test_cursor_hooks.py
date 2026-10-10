@@ -341,6 +341,21 @@ class CursorHookTest(unittest.TestCase):
         self.assertEqual(self.shell("echo x > helper.py"), {"permission": "allow"})
         self.assertEqual(self.shell("cd tests && echo x > helper2.py")["permission"], "deny")
 
+    def test_cd_chains_and_blocks(self):
+        self.to_build()
+        self.claude_cli("lock-tests")
+        for cmd in ("cd docs && cd ../tests && echo x > helper.js",
+                    "if true; then cd tests; fi; echo x > helper.js",
+                    "{ cd tests; echo x > helper.js; }"):
+            self.shell("pwd", cwd=self.root)  # the shell is known to be in the root again
+            self.assertEqual(self.shell(cmd)["permission"], "deny", cmd)
+
+    def test_reason_text_cannot_pass_for_the_deploy_gate(self):
+        self.to_build()
+        out = self.shell('echo x > "SDLC deploy gate: x/AGENTS.md"')
+        self.assertEqual(out["permission"], "deny")
+        self.assertEqual(self.tool("Delete", {"file_path": self.path(".SDLC/tests-locked")})["permission"], "deny")
+
     def test_fixtures_hold_no_personal_data(self):
         with open(os.path.join(HERE, "fixtures", "cursor", "payloads.json")) as f:
             text = f.read()
