@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(os.path.dirname(HERE), "scripts", "sdlc.py")
@@ -685,6 +686,27 @@ class HookTest(unittest.TestCase):
         out = self.hook("pre-edit", tool_name="Write",
                         tool_input={"file_path": os.path.join(self.home, ".config/acme/rules.json")})
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "ask")
+
+    def test_concurrent_state_writes_do_not_collide(self):
+        # Cursor runs sessionStart and beforeSubmitPrompt at the same time, and both write the
+        # session file. Another writer finishing between this writer's write and its rename
+        # must not make the rename fail.
+        sys.path.insert(0, os.path.dirname(SCRIPT))
+        import sdlc
+        path = self.path(".sdlc/sessions/s.json")
+        real_replace, raced = os.replace, []
+
+        def racing_replace(src, dst):
+            if not raced:
+                raced.append(True)
+                sdlc.write_json(path, {"writer": "other"})
+            return real_replace(src, dst)
+
+        with mock.patch.object(sdlc.os, "replace", racing_replace):
+            sdlc.write_json(path, {"writer": "this"})
+        with open(path) as f:
+            self.assertEqual(json.load(f), {"writer": "this"})
+        self.assertEqual([n for n in os.listdir(os.path.dirname(path)) if n.endswith(".tmp")], [])
 
     def test_config_template_matches_defaults(self):
         sys.path.insert(0, os.path.dirname(SCRIPT))
