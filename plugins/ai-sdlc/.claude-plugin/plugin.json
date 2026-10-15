@@ -1,7 +1,7 @@
 {
   "name": "ai-sdlc",
   "displayName": "AI-native SDLC",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "AI-native SDLC (Anthropic playbook): intent -> spec -> plan -> build -> verify -> review -> maintain, with hook-enforced human approval gates.",
   "author": { "name": "Yevhenii Dziubenko" },
   "keywords": ["sdlc", "workflow", "governance", "hooks", "tdd", "review"],
