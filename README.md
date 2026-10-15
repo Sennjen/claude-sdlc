@@ -10,11 +10,11 @@ that are enforced by hooks, not just requested in a prompt.
 
 | Layer | Where | Role |
 |-------|-------|------|
-| Hooks | `plugins/sdlc/hooks/hooks.json`, `scripts/sdlc.py` | Deterministic gates. The agent cannot skip them |
-| Skills | `plugins/sdlc/skills/*` | Per-stage playbooks and templates, loaded on demand |
-| Agent | `plugins/sdlc/agents/sdlc-reviewer.md` | Independent read-only reviewer for stage 5 |
-| UI | `plugins/sdlc/hooks/ui.tsx` | A band above the prompt and `SDLC` in the footer: state, next action, approvals by button, a typeahead for `sdlc ...` commands. Shows state; enforces nothing |
-| CLAUDE.md section | added by `/sdlc:init` | Short always-on rules for the repository |
+| Hooks | `plugins/ai-sdlc/hooks/hooks.json`, `scripts/sdlc.py` | Deterministic gates. The agent cannot skip them |
+| Skills | `plugins/ai-sdlc/skills/*` | Per-stage playbooks and templates, loaded on demand |
+| Agent | `plugins/ai-sdlc/agents/sdlc-reviewer.md` | Independent read-only reviewer for stage 5 |
+| UI | `plugins/ai-sdlc/hooks/ui.tsx` | A band above the prompt and `SDLC` in the footer: state, next action, approvals by button, a typeahead for `sdlc ...` commands. Shows state; enforces nothing |
+| CLAUDE.md section | added by `/ai-sdlc:init` | Short always-on rules for the repository |
 | `sdlc.config.json` | repo root | Opt-in switch plus verify commands. Without it the plugin does nothing |
 
 ## Gates
@@ -56,12 +56,12 @@ moves it on:
 
 | When | Action |
 |------|--------|
-| No active feature | `Start feature` (runs `/sdlc:intent`) and `Fast-track` (`sdlc trivial`) |
+| No active feature | `Start feature` (runs `/ai-sdlc:intent`) and `Fast-track` (`sdlc trivial`) |
 | The stage's artifact is missing | `Write intent`, `Write spec`, `Write plan` (runs the stage skill) |
 | The artifact is a draft or changed | `Approve <stage>` / `Re-approve <stage>`, one click |
-| Build | `Start building` / `Continue building` (runs `/sdlc:build`), with `n/N steps` |
-| Every plan step is done, no current review | `Review` (runs `/sdlc:review`); `Review again` after `CHANGES REQUIRED` |
-| The review of the current code passed | `Create PR` (runs `/sdlc:review pr`) |
+| Build | `Start building` / `Continue building` (runs `/ai-sdlc:build`), with `n/N steps` |
+| Every plan step is done, no current review | `Review` (runs `/ai-sdlc:review`); `Review again` after `CHANGES REQUIRED` |
+| The review of the current code passed | `Create PR` (runs `/ai-sdlc:review pr`) |
 | The PR exists | `Close feature` (`sdlc done`) |
 | Claude asked to unlock the tests | `Unlock tests` (`sdlc unlock tests`) |
 
@@ -92,7 +92,7 @@ it and any code edit makes it stale. The PR URL comes from the output of `gh pr 
   `Close feature`, `Unlock tests` and `End fast-track`.
 - **Other features**: one row per open feature with its stage; a row makes that feature active
   (`sdlc feature <slug>`).
-- `Init SDLC` (runs `/sdlc:init`) in a repository without `sdlc.config.json`.
+- `Init SDLC` (runs `/ai-sdlc:init`) in a repository without `sdlc.config.json`.
 
 A user-only button (`Approve`, `Unlock tests`, `Close feature`, `End fast-track`, a row of
 Other features)
@@ -110,7 +110,7 @@ desktop app has no such channel, so there the toasts alone show.
 ## Plan mode
 
 The playbook drafts the plan in Claude Code plan mode, where Claude reads the code but cannot
-change it. The bar does not switch to plan mode: `Write plan` runs `/sdlc:plan` in the current
+change it. The bar does not switch to plan mode: `Write plan` runs `/ai-sdlc:plan` in the current
 mode, and Claude writes `plan.md` directly. The code gate already keeps the code untouched until
 you approve the plan. Plan mode replaces the session's permission mode while it lasts. In a
 `bypassPermissions` session, every Bash command of Claude and its subagents then asks for
@@ -122,7 +122,7 @@ ends plan mode: Claude then writes it to `plan.md`. In both modes the code gate 
 approve that file (`Approve plan` or `sdlc approve plan`).
 
 The tests stay locked until the person unlocks them. Claude can only ask: the plugin gives it a
-`request_test_unlock` tool (`mcp__sdlc__request_test_unlock`), which turns the band's action into
+`request_test_unlock` tool (`mcp__ai-sdlc__request_test_unlock`), which turns the band's action into
 `Unlock tests`. The tool itself unlocks nothing. Its schema is in Claude's tool list from the
 start, not behind ToolSearch, because the verify skill tells Claude to call it.
 
@@ -144,21 +144,26 @@ In an interactive `claude` terminal:
 
 ```
 /plugin marketplace add Sennjen/claude-sdlc
-/plugin install sdlc@ai-sdlc
+/plugin install ai-sdlc@ai-sdlc
 ```
 
 or from a shell:
 
 ```bash
 claude plugin marketplace add Sennjen/claude-sdlc
-claude plugin install sdlc@ai-sdlc
+claude plugin install ai-sdlc@ai-sdlc
 ```
 
-Then, inside a project, run `/sdlc:init`. It detects the verify commands, adds the
+Upgrading from the plugin's earlier name, `sdlc`: the marketplace's `renames` map migrates
+`sdlc@ai-sdlc` to `ai-sdlc@ai-sdlc`, settings included. If Claude Code then says the plugin is
+not cached, run `/plugin install ai-sdlc@ai-sdlc` once. The skills move from `/sdlc:...` to
+`/ai-sdlc:...`; the `sdlc ...` commands, `sdlc.config.json` and `.sdlc/` stay the same.
+
+Then, inside a project, run `/ai-sdlc:init`. It detects the verify commands, adds the
 CLAUDE.md section and `REVIEW.md`, and writes `sdlc.config.json` last. Commit the result.
 
 To try the plugin without installing it, clone the repository and run
-`claude --plugin-dir ./claude-sdlc/plugins/sdlc`.
+`claude --plugin-dir ./claude-sdlc/plugins/ai-sdlc`.
 
 ### Enforce it across an organization
 
@@ -175,7 +180,7 @@ console). Managed settings take precedence over every other scope, and users can
       "autoUpdate": true
     }
   },
-  "enabledPlugins": { "sdlc@ai-sdlc": true },
+  "enabledPlugins": { "ai-sdlc@ai-sdlc": true },
   "strictKnownMarketplaces": [
     { "source": "git", "url": "https://gitlab.example.com/tools/claude-sdlc.git" }
   ],
@@ -262,20 +267,20 @@ docs/sdlc/<feature>/
 ## Tests
 
 ```bash
-cd plugins/sdlc && python3 -m unittest discover -s tests -v
+cd plugins/ai-sdlc && python3 -m unittest discover -s tests -v
 ```
 
 The UI module has its own tests and type check (Claude Code 2.1.293+, TypeScript 5.4+):
 
 ```bash
-claude plugin validate plugins/sdlc && claude plugin test plugins/sdlc
+claude plugin validate plugins/ai-sdlc && claude plugin test plugins/ai-sdlc
 ```
 
 ```bash
-cd plugins/sdlc && npx -p typescript tsc -p .
+cd plugins/ai-sdlc && npx -p typescript tsc -p .
 ```
 
-The eval suite in `plugins/sdlc/evals/` checks the agent's behaviour, not the hooks: a feature
+The eval suite in `plugins/ai-sdlc/evals/` checks the agent's behaviour, not the hooks: a feature
 request starts with `intent.md`, an approved intent gets a spec that flags conflicting
 constraints, a skipped spec gets a plan before code, a bug fix locks the tests before the fix,
 work outside the approved plan stays out of the change, a typo asks for `sdlc trivial`, a
@@ -285,18 +290,18 @@ waits for the user. Each case runs three times with the plugin and three times w
 from a terminal where `claude` is logged in:
 
 ```bash
-cd plugins/sdlc && claude plugin eval . --scaffold --allow-tools Bash Write Edit
+cd plugins/ai-sdlc && claude plugin eval . --scaffold --allow-tools Bash Write Edit
 ```
 
 ```bash
-cd plugins/sdlc && claude plugin eval . --case trivial-change-asks-for-fast-track --runs 1 --ablation none --scaffold --allow-tools Bash Write Edit
+cd plugins/ai-sdlc && claude plugin eval . --case trivial-change-asks-for-fast-track --runs 1 --ablation none --scaffold --allow-tools Bash Write Edit
 ```
 
 The second command runs one case once, for iterating on a skill. `--scaffold` runs each case's
 `fixture.sh`, which builds a small repository with the SDLC enabled.
 
 `tsc` reads the engine's declarations from `.claude-plugin/types/` (gitignored). Claude Code
-writes them there when it loads the plugin from this folder (`claude --plugin-dir plugins/sdlc`).
+writes them there when it loads the plugin from this folder (`claude --plugin-dir plugins/ai-sdlc`).
 
 ## License
 

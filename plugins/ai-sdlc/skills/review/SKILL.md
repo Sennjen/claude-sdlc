@@ -10,7 +10,7 @@ Agents review mechanics, humans review intent and risk.
 Invoked with `pr` (the SDLC bar's *Create PR*, offered once a review of the current code
 passed): check the pre-flight, then go straight to step 4.
 
-1. **Pre-flight.** Verification from **sdlc:verify** has passed in this session and
+1. **Pre-flight.** Verification from **ai-sdlc:verify** has passed in this session and
    `git status` shows only intended changes. Artifacts in `docs/sdlc/<slug>/` are committed.
 2. **Independent agent review.** Launch the `sdlc-reviewer` subagent (fresh context, no
    bias from writing the code) with the feature slug and the base branch. If the

@@ -1,7 +1,7 @@
 # Review policy
 
 Used by Claude PR review (managed Code Review / claude-code-action) and by the
-`sdlc:review` skill. Humans review intent and risk; agents review mechanics.
+`ai-sdlc:review` skill. Humans review intent and risk; agents review mechanics.
 
 ## Passes (every PR)
 

@@ -1,4 +1,4 @@
 __pycache__/
 *.pyc
 .DS_Store
-plugins/sdlc/evals/results/
+plugins/ai-sdlc/evals/results/

@@ -23,4 +23,4 @@ description: SDLC stage 3b (Build) - implement an approved plan.md step by step 
    verification command, and review their diffs before integrating.
 5. **Never bypass the gates.** Do not edit code via shell redirects, `sed -i`, patches or
    generated scripts. Do not touch `docs/sdlc/*/approvals.json` or `.sdlc/`.
-6. When all steps are done, continue with the **sdlc:verify** skill, then **sdlc:review**.
+6. When all steps are done, continue with the **ai-sdlc:verify** skill, then **ai-sdlc:review**.

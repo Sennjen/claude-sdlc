@@ -6,9 +6,12 @@
   },
   "plugins": [
     {
-      "name": "sdlc",
-      "source": "./plugins/sdlc",
+      "name": "ai-sdlc",
+      "source": "./plugins/ai-sdlc",
       "description": "AI-native SDLC with hook-enforced approval gates."
     }
-  ]
+  ],
+  "renames": {
+    "sdlc": "ai-sdlc"
+  }
 }

@@ -60,7 +60,7 @@ export type ExtraFiles = { progress: boolean; approvals: boolean; steps: { done:
 
 declare module 'claude-code' {
   interface PluginState {
-    'sdlc': {
+    'ai-sdlc': {
       state: SdlcState | null
       error: string | null
       busy: boolean

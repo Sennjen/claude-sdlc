@@ -20,17 +20,17 @@ import type { Approval, ExtraFiles, FeatureInfo, SdlcState, Stage, StageInfo } f
 const REFRESH_MS = 10_000
 const STAGES: readonly Stage[] = ['intent', 'spec', 'plan']
 
-const stateAtom = atom({ plugin: 'sdlc', key: 'state' } as const, null)
-const errorAtom = atom({ plugin: 'sdlc', key: 'error' } as const, null)
-const busyAtom = atom({ plugin: 'sdlc', key: 'busy' } as const, false)
-const filesAtom = atom({ plugin: 'sdlc', key: 'files' } as const, {
+const stateAtom = atom({ plugin: 'ai-sdlc', key: 'state' } as const, null)
+const errorAtom = atom({ plugin: 'ai-sdlc', key: 'error' } as const, null)
+const busyAtom = atom({ plugin: 'ai-sdlc', key: 'busy' } as const, false)
+const filesAtom = atom({ plugin: 'ai-sdlc', key: 'files' } as const, {
   progress: false,
   approvals: false,
   steps: { done: 0, total: 0 },
 })
-const detailsAtom = atom({ plugin: 'sdlc', key: 'details' } as const, false)
-const hiddenAtom = atom({ plugin: 'sdlc', key: 'hidden' } as const, false)
-const unlockAtom = atom({ plugin: 'sdlc', key: 'unlockRequest' } as const, null)
+const detailsAtom = atom({ plugin: 'ai-sdlc', key: 'details' } as const, false)
+const hiddenAtom = atom({ plugin: 'ai-sdlc', key: 'hidden' } as const, false)
+const unlockAtom = atom({ plugin: 'ai-sdlc', key: 'unlockRequest' } as const, null)
 
 // The model's way to ask for the test lock to be lifted. It unlocks nothing: the band then
 // offers `Unlock tests`, and only the person's press (or typed command) unlocks. The verify
@@ -351,10 +351,10 @@ const isBuilt = (s: On, steps: Steps) => (steps.total === 0 ? !!s.verify.last?.o
 function nextAction($: EngineInterface, s: On, steps: Steps = NO_STEPS): Action | null {
   if (!s.active) {
     if (s.fasttrack) return { key: 'fasttrack-off', label: 'End fast-track', run: () => press($, 'sdlc trivial off') }
-    return { key: 'start', label: 'Start feature', run: () => runCommand($, '/sdlc:intent') }
+    return { key: 'start', label: 'Start feature', run: () => runCommand($, '/ai-sdlc:intent') }
   }
   if (s.stage === 'build') {
-    const build = (label: string): Action => ({ key: 'build', label, run: () => runCommand($, '/sdlc:build') })
+    const build = (label: string): Action => ({ key: 'build', label, run: () => runCommand($, '/ai-sdlc:build') })
     if (!isBuilt(s, steps)) {
       if (steps.total === 0) return build('Build')
       return build(steps.done === 0 ? 'Start building' : 'Continue building')
@@ -362,11 +362,11 @@ function nextAction($: EngineInterface, s: On, steps: Steps = NO_STEPS): Action 
     // A finished build goes through review, then the PR; the feature closes once the PR exists.
     if (s.pr) return { key: 'done', label: 'Close feature', run: () => press($, 'sdlc done') }
     const review = reviewState(s)
-    if (review === 'ready') return { key: 'pr', label: 'Create PR', run: () => runCommand($, '/sdlc:review', 'pr') }
+    if (review === 'ready') return { key: 'pr', label: 'Create PR', run: () => runCommand($, '/ai-sdlc:review', 'pr') }
     return {
       key: 'review',
       label: review === 'changes' ? 'Review again' : 'Review',
-      run: () => runCommand($, '/sdlc:review'),
+      run: () => runCommand($, '/ai-sdlc:review'),
     }
   }
   const stage = s.stage
@@ -376,7 +376,7 @@ function nextAction($: EngineInterface, s: On, steps: Steps = NO_STEPS): Action 
     // The plan skill runs outside plan mode too: plan mode replaces the session's permission
     // mode (a bypassPermissions session then asks about every Bash read), and the code gate
     // already keeps code untouched until `sdlc approve plan`.
-    return { key: 'write', label: `Write ${stage}`, run: () => runCommand($, `/sdlc:${stage}`) }
+    return { key: 'write', label: `Write ${stage}`, run: () => runCommand($, `/ai-sdlc:${stage}`) }
   }
   if ((info.state === 'draft' || info.state === 'stale') && info.sha256) {
     const sha256 = info.sha256
@@ -445,7 +445,7 @@ export const register: Register = on => {
     }
     await refresh($)
     // The timer catches edits made outside the session (the person's editor). Where
-    // SDLC is off it idles; prompts and tool calls still notice a later /sdlc:init.
+    // SDLC is off it idles; prompts and tool calls still notice a later /ai-sdlc:init.
     $.clock.every(REFRESH_MS, () =>
       void read($, stateAtom).then(s => (s && !s.enabled ? undefined : refresh($))),
     )
@@ -860,7 +860,7 @@ function Details(
         <Text dimColor>Not enabled in this repository. Init detects the verify commands and adds</Text>
         <Text dimColor>sdlc.config.json, a CLAUDE.md section, REVIEW.md and docs/sdlc/.</Text>
         <Box>
-          <Button key="init" label="Init SDLC" {...keys(els, 'i', true)} onPress={() => runCommand($, '/sdlc:init')} />
+          <Button key="init" label="Init SDLC" {...keys(els, 'i', true)} onPress={() => runCommand($, '/ai-sdlc:init')} />
         </Box>
       </Box>
     )
@@ -941,13 +941,13 @@ function Details(
   const started = steps.total === 0 || steps.done > 0
   const finished = isBuilt(s, steps)
   if (building && started && !verified) {
-    actions.push({ key: 'verify', label: 'Run verify', hotkey: 'v', run: () => runCommand($, '/sdlc:verify') })
+    actions.push({ key: 'verify', label: 'Run verify', hotkey: 'v', run: () => runCommand($, '/ai-sdlc:verify') })
   }
   if (building && started) {
     actions.push({ key: 'changes', label: 'Show changes', hotkey: 'd', run: () => showChanges($) })
   }
   if (building && started && (steps.total > 0 || verified) && action?.key !== 'review') {
-    actions.push({ key: 'review', label: 'Review', hotkey: 'r', run: () => runCommand($, '/sdlc:review') })
+    actions.push({ key: 'review', label: 'Review', hotkey: 'r', run: () => runCommand($, '/ai-sdlc:review') })
   }
   if (building && finished && action?.key !== 'done') {
     actions.push({ key: 'done', label: 'Close feature', hotkey: 'c', run: () => press($, 'sdlc done') })

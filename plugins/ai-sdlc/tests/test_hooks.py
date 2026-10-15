@@ -650,7 +650,7 @@ class HookTest(unittest.TestCase):
         os.remove(self.path("sdlc.config.json"))
         self.assertEqual(json.loads(self.cli("state")[1]), {"enabled": False})
 
-    def review(self, text, agent="sdlc:sdlc-reviewer"):
+    def review(self, text, agent="ai-sdlc:sdlc-reviewer"):
         self.hook("subagent-stop", agent_type=agent, last_assistant_message=text)
         return json.loads(self.cli("state", "--session", SID)[1])["review"]
 
@@ -677,7 +677,7 @@ class HookTest(unittest.TestCase):
 
     def test_review_from_subagent_handback(self):
         self.to_build()
-        self.hook("post-tool", tool_name="SubagentHandback", agent_type="sdlc:sdlc-reviewer",
+        self.hook("post-tool", tool_name="SubagentHandback", agent_type="ai-sdlc:sdlc-reviewer",
                   tool_input={"message": "READY FOR HUMAN REVIEW"}, tool_response={})
         self.assertEqual(json.loads(self.cli("state")[1])["review"]["verdict"], "ready")
 

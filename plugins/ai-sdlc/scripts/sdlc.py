@@ -24,12 +24,12 @@ STAGES = ("intent", "spec", "plan")
 SKIPPABLE = ("spec",)
 STAGE_LABEL = {"intent": "1 Plan (intent.md)", "spec": "2 Design (spec.md)",
                "plan": "3 Build: planning (plan.md)", "build": "3-5 Build / Verify / Review"}
-STAGE_SKILL = {"intent": "sdlc:intent", "spec": "sdlc:spec", "plan": "sdlc:plan",
-               "build": "sdlc:build, then sdlc:verify and sdlc:review"}
+STAGE_SKILL = {"intent": "ai-sdlc:intent", "spec": "ai-sdlc:spec", "plan": "ai-sdlc:plan",
+               "build": "ai-sdlc:build, then ai-sdlc:verify and ai-sdlc:review"}
 MAX_STOP_RETRIES = 2
 # Where the fast-track ends: behaviour decides, not the size of the diff.
 TRIVIAL_RULE = ("Any change that adds or changes behaviour (a new option, flag, endpoint, rule or "
-                "screen, or a bug fix) is a feature, however small: start it with the sdlc:intent "
+                "screen, or a bug fix) is a feature, however small: start it with the ai-sdlc:intent "
                 "skill (`sdlc new <slug>`) without asking first. Only a change with no new behaviour "
                 "(a typo, copy text, a comment, a config value) may skip that: then ask the user to "
                 "type `sdlc trivial`.")
@@ -1067,7 +1067,7 @@ def handle_user_command(p, sid, line):
         approvals[stage] = {"skipped": True, "reason": reason, "by": user, "at": now()}
         p.save_approvals(slug, approvals)
         p.audit("skip", feature=slug, stage=stage, by=user, reason=reason)
-        return "[SDLC] The user skipped %s for `%s` (%s). Next: write plan.md (skill sdlc:plan)." % (stage, slug, reason)
+        return "[SDLC] The user skipped %s for `%s` (%s). Next: write plan.md (skill ai-sdlc:plan)." % (stage, slug, reason)
 
     if verb == "trivial":
         sess = p.session(sid)
@@ -1081,7 +1081,7 @@ def handle_user_command(p, sid, line):
         p.audit("fasttrack", session=sid, by=user, reason=rest)
         return ("[SDLC] The user enabled fast-track for this session (trivial change: %s). Code edits "
                 "are allowed without intent/spec/plan. Keep the change minimal, still run verification "
-                "(skill sdlc:verify). If it grows beyond trivial, stop and propose `sdlc new <slug>`."
+                "(skill ai-sdlc:verify). If it grows beyond trivial, stop and propose `sdlc new <slug>`."
                 % (rest or "no reason given"))
 
     if verb == "unlock":
@@ -1099,7 +1099,7 @@ def handle_user_command(p, sid, line):
         p.audit("activate", feature=slug, by=user)
         exists = os.path.isfile(os.path.join(p.fdir(slug), "intent.md"))
         return "[SDLC] Active feature set to `%s` by the user.%s" % (
-            slug, "" if exists else " It has no intent.md yet: run `sdlc new %s` (skill sdlc:intent)." % slug)
+            slug, "" if exists else " It has no intent.md yet: run `sdlc new %s` (skill ai-sdlc:intent)." % slug)
 
     if verb == "done":
         slug = p.active()
@@ -1320,7 +1320,7 @@ def hook_pre_bash(data, p):
         decision = p.cfg["gated_command_decision"]
         p.audit("gate-" + decision, tool="Bash", command=cmd[:300], reason=pattern)
         pre_decision(decision, "SDLC deploy gate: `%s` needs explicit user approval. Make sure "
-                               "verification passed and the PR review (skill sdlc:review) is done." % cmd[:120])
+                               "verification passed and the PR review (skill ai-sdlc:review) is done." % cmd[:120])
     scratch = data.get("scratchpad_dir")
     for target in bash_write_targets(cmd, cwd):
         if target == "?":
@@ -1407,7 +1407,7 @@ def plan_mode_context(p, sid):
     if stage == "plan":
         return ("[SDLC] The user accepted this plan in plan mode. That is not the SDLC plan approval: "
                 "the code gate stays closed. Write the plan to %s in the sections of the plan "
-                "template (skill sdlc:plan), then ask the user to review it and type `sdlc approve "
+                "template (skill ai-sdlc:plan), then ask the user to review it and type `sdlc approve "
                 "plan`. Do not edit code before that." % p.rel(os.path.join(p.fdir(slug), "plan.md")))
     if stage == "build":
         return ("[SDLC] plan.md of `%s` is already approved. If the plan you presented changes its "
@@ -1488,7 +1488,7 @@ def cli(argv):
         return 0
     if not root:
         print("SDLC is not enabled here (no %s). Only the user can enable it, by running "
-              "`/sdlc:init`." % CONFIG_NAME)
+              "`/ai-sdlc:init`." % CONFIG_NAME)
         return 1
     p = Project(root)
 

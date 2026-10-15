@@ -17,7 +17,7 @@ const DRAFT: On1 = {
   stage: 'spec',
   stage_state: 'draft',
   stage_label: '2 Design (spec.md)',
-  next_skill: 'sdlc:spec',
+  next_skill: 'ai-sdlc:spec',
   code_gate: 'closed',
   artifact: 'docs/sdlc/feat-a/spec.md',
   stages: {
@@ -71,7 +71,7 @@ function fakeSdlc(on: On, state: SdlcState = DRAFT) {
   on('tool.register', ($, e) => {
     fake.tools.push(e.name)
     fake.deferred.push(e.isDeferred)
-    return { value: { tool: `mcp__sdlc__${e.name}` } }
+    return { value: { tool: `mcp__ai-sdlc__${e.name}` } }
   })
   // The person's notification channel, as a terminal with one answers.
   on('ui.notify', ($, e) => {
@@ -160,7 +160,7 @@ async function mount($: Engine, surface: 'terminal' | 'desktop', component: Rend
     SessionMode: { modes: ['focus'] },
   }[component as 'AbovePrompt' | 'Pane' | 'SessionMode']
   const requestId = component === 'Pane' ? 'sdlc' : undefined
-  return $.ui.mount({ plugin: 'sdlc', surface, component, props, requestId } as never) as Promise<
+  return $.ui.mount({ plugin: 'ai-sdlc', surface, component, props, requestId } as never) as Promise<
     Mounted<'terminal' | 'desktop'>
   >
 }
@@ -300,7 +300,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await band.press({ key: 'changes' })
     expect(fake.panes).toEqual(['diff'])
     await band.press({ key: 'verify' })
-    expect(fake.ran).toEqual(['sdlc:verify'])
+    expect(fake.ran).toEqual(['ai-sdlc:verify'])
     expect(fake.filled).toEqual([])
   })
 
@@ -324,7 +324,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     // Locked as the bug-fix flow plans it: the build goes on.
     expect((await band.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['feature', 'build', 'hide'])
 
-    const asked = await $.tool.call({ tool: 'mcp__sdlc__request_test_unlock', reason: 'review found new cases' } as never)
+    const asked = await $.tool.call({ tool: 'mcp__ai-sdlc__request_test_unlock', reason: 'review found new cases' } as never)
     expect(JSON.stringify(asked)).toContain('Stop here and wait')
     expect((await band.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['feature', 'unlock', 'hide'])
     // The reason stays in the chat: the band keeps a short note, so its button stays on the row.
@@ -338,7 +338,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
   test(`${surface}: asking for an unlock with nothing locked changes nothing`, async ($, on) => {
     fakeSdlc(on, BUILD)
     const band = await mount($, surface, 'AbovePrompt')
-    const asked = await $.tool.call({ tool: 'mcp__sdlc__request_test_unlock', reason: 'x' } as never)
+    const asked = await $.tool.call({ tool: 'mcp__ai-sdlc__request_test_unlock', reason: 'x' } as never)
     expect(JSON.stringify(asked)).toContain('not locked')
     expect(await band.find({ key: 'unlock' })).toBeUndefined()
   })
@@ -387,7 +387,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const keys = async () => (await band.findAll({ type: 'Button' })).map(b => b.key)
 
     await band.press({ key: 'review' })
-    expect(fake.ran).toEqual(['sdlc:review'])
+    expect(fake.ran).toEqual(['ai-sdlc:review'])
 
     // The reviewer asked for changes: review again, with a short warning.
     fake.state = { ...fake.state, review: { verdict: 'changes', at: '2026-10-06T10:00:00+02:00', current: true } }
@@ -403,7 +403,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await keys()).toEqual(['feature', 'pr', 'hide'])
     expect(await band.find({ text: /Build · review passed/ })).toBeDefined()
     await band.press({ key: 'pr' })
-    expect(fake.ran).toEqual(['sdlc:review', 'sdlc:review pr'])
+    expect(fake.ran).toEqual(['ai-sdlc:review', 'ai-sdlc:review pr'])
 
     // Once the PR exists, the band offers Close feature.
     fake.state = { ...fake.state, pr: { url: 'https://github.com/o/r/pull/12', at: '2026-10-06T11:05:00+02:00' } }
@@ -477,7 +477,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     // Write plan runs the skill directly, not /plan: plan mode would drop bypassPermissions.
     expect((await ui.find({ key: 'write' }))?.props.label).toBe('Write plan')
     await ui.press({ key: 'write' })
-    expect(fake.ran).toEqual(['sdlc:plan'])
+    expect(fake.ran).toEqual(['ai-sdlc:plan'])
   })
 
   test(`${surface}: the current artifact in the band opens in the Files pane`, async ($, on) => {
@@ -541,7 +541,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
     const fake = fakeSdlc(on)
     await $.session.start({ cwd: '/repo', surface, isInteractive: true })
     const band = await $.ui.mount({
-      plugin: 'sdlc', surface, component: 'AbovePrompt',
+      plugin: 'ai-sdlc', surface, component: 'AbovePrompt',
       props: { hasSurvey: false, isWorking: true, maxRows: 20, bodyColumns: 120, ...SITE },
     } as never) as Mounted<'terminal' | 'desktop'>
 
@@ -570,12 +570,12 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await ui.find({ key: 'approve' })).toBeDefined()
   })
 
-  test(`${surface}: in build the band offers Build, which runs /sdlc:build at once`, async ($, on) => {
+  test(`${surface}: in build the band offers Build, which runs /ai-sdlc:build at once`, async ($, on) => {
     const fake = fakeSdlc(on, BUILD)
     const ui = await mount($, surface, 'AbovePrompt')
 
     await ui.press({ key: 'build' })
-    expect(fake.ran).toEqual(['sdlc:build'])
+    expect(fake.ran).toEqual(['ai-sdlc:build'])
     expect(fake.filled).toEqual([])
     expect(fake.commands).toEqual([])
   })
@@ -587,7 +587,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     await ui.press({ key: 'build' })
     expect(fake.ran).toEqual([])
-    expect(fake.filled).toEqual(['/sdlc:build '])
+    expect(fake.filled).toEqual(['/ai-sdlc:build '])
   })
 
   test(`${surface}: SDLC in the footer unfolds the band into the details`, async ($, on) => {
@@ -648,7 +648,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
     await footer.press({ key: 'sdlc' })
     await band.press({ key: 'init' })
-    expect(fake.ran).toEqual(['sdlc:init'])
+    expect(fake.ran).toEqual(['ai-sdlc:init'])
     expect(await band.findAll({ type: 'Button' })).toHaveLength(0)
   })
 }
