@@ -2,13 +2,14 @@
   "name": "ai-sdlc",
   "description": "AI-native SDLC workflow plugins for Claude Code.",
   "owner": {
-    "name": "Yevhenii Dziubenko"
+    "name": "Yevhenii Dziubenko",
+    "url": "https://github.com/Sennjen"
   },
   "plugins": [
     {
       "name": "ai-sdlc",
       "source": "./plugins/ai-sdlc",
-      "description": "AI-native SDLC with hook-enforced approval gates."
+      "description": "Hook-enforced approval gates for Claude Code: intent → spec → plan → build → verify → review, with a status bar and one-click approvals."
     }
   ],
   "renames": {

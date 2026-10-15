@@ -1,10 +1,30 @@
-# claude-sdlc
+# AI-native SDLC for Claude Code
 
-A Claude Code plugin that puts the agent on the rails of Anthropic's
+[![Release](https://img.shields.io/github/v/release/Sennjen/claude-sdlc)](https://github.com/Sennjen/claude-sdlc/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+A Claude Code plugin (`ai-sdlc`) that puts the agent on the rails of the
 [AI-native SDLC playbook](https://academy.claude.com/courses/ai-native-sdlc-playbook/introduction):
 
 **Intent → Spec → Plan → Build → Verify → Review → Maintain**, with human approval gates
-that are enforced by hooks, not just requested in a prompt.
+that are enforced by hooks, not just requested in a prompt. Claude cannot edit code until you
+approve the plan, cannot approve for you, and cannot finish a turn that breaks your verify
+commands.
+
+## Quick start
+
+```bash
+claude plugin marketplace add Sennjen/claude-sdlc
+```
+
+```bash
+claude plugin install ai-sdlc@ai-sdlc
+```
+
+Then run `/ai-sdlc:init` in your project. [Install](#install) covers the requirements,
+organization-wide rollout and upgrading from the plugin's earlier name, `sdlc`.
+
+This is an independent project, not made or endorsed by Anthropic.
 
 ## Layers
 

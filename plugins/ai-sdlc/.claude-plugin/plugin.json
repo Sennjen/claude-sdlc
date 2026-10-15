@@ -2,8 +2,29 @@
   "name": "ai-sdlc",
   "displayName": "AI-native SDLC",
   "version": "0.7.0",
-  "description": "AI-native SDLC (Anthropic playbook): intent -> spec -> plan -> build -> verify -> review -> maintain, with hook-enforced human approval gates.",
-  "author": { "name": "Yevhenii Dziubenko" },
-  "keywords": ["sdlc", "workflow", "governance", "hooks", "tdd", "review"],
+  "description": "Hook-enforced approval gates for Claude Code: intent → spec → plan → build → verify → review, with a status bar and one-click approvals.",
+  "author": {
+    "name": "Yevhenii Dziubenko",
+    "url": "https://github.com/Sennjen"
+  },
+  "homepage": "https://github.com/Sennjen/claude-sdlc#readme",
+  "repository": "https://github.com/Sennjen/claude-sdlc",
+  "license": "MIT",
+  "keywords": [
+    "sdlc",
+    "ai-native-sdlc",
+    "spec-driven-development",
+    "sdd",
+    "approval-gates",
+    "human-in-the-loop",
+    "hooks",
+    "tdd",
+    "code-review",
+    "workflow",
+    "governance"
+  ],
+  "icon": "./icon.svg",
+  "documentationUrl": "https://github.com/Sennjen/claude-sdlc#readme",
+  "supportUrl": "https://github.com/Sennjen/claude-sdlc/issues",
   "types": "./types/index.d.ts"
 }
