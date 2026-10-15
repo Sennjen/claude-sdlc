@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
-import type { On, RenderComponent } from 'claude-code'
+import type { On, PromptAutocompleteInput, PromptAutocompleteResult, RenderComponent } from 'claude-code'
 
 import type { SdlcState, StageInfo } from '../types'
 
@@ -65,11 +65,22 @@ function fakeSdlc(on: On, state: SdlcState = DRAFT) {
     hasFilesPane: true,
     clock: mock.clock(on),
     tools: [] as string[],
+    deferred: [] as (boolean | undefined)[],
+    notes: [] as string[],
   }
   on('tool.register', ($, e) => {
     fake.tools.push(e.name)
+    fake.deferred.push(e.isDeferred)
     return { value: { tool: `mcp__sdlc__${e.name}` } }
   })
+  // The person's notification channel, as a terminal with one answers.
+  on('ui.notify', ($, e) => {
+    fake.notes.push(e.text)
+    return { value: { isSent: true, channel: 'kitty' } }
+  })
+  // The engine beneath the plugin: no typeahead rows of its own, and a turn that ends.
+  on('prompt.autocomplete', () => ({ suggestions: [] }))
+  on('turn.complete', ($, e) => ({ text: e.answer }))
   // A slash command run as if typed; an unknown one is refused.
   on('command.run', ($, e) => {
     if (!fake.canRun) throw new Error(`unknown command /${e.command}`)
@@ -181,6 +192,98 @@ const DONE_ALL = '- [x] Step 1: a\n- [x] Step 2: b\n- [X] step 3: c\n- [x] Step 
 const VERIFIED: On1 ={ ...BUILD, verify: { commands: ['npm test'], last: { ok: true, at: '2026-10-05T18:47:00+02:00', report: null } } }
 const IDLE: On1 = { ...DRAFT, active: null, stage: null, stage_state: null, stage_label: null, next_skill: null,
   artifact: null, stages: {}, features: [] }
+const FEAT_B = { slug: 'feat-b', stage: 'plan', stage_state: 'draft', done: false } as const
+const CLOSED = { slug: 'closed', stage: 'build', stage_state: null, done: true } as const
+
+/** The prompt's typeahead for a draft whose last word is the token at the cursor. The
+ *  2.1.295 typings of the test's `$` leave this event out of `prompt`; the kit raises it. */
+async function typeahead($: Engine, text: string) {
+  const prompt = $.prompt as unknown as {
+    autocomplete: (e: PromptAutocompleteInput) => Promise<PromptAutocompleteResult>
+  }
+  const start = text.search(/\S+$/)
+  const { suggestions } = await prompt.autocomplete({ text, cursor: text.length, token: text.slice(start), start })
+  return suggestions.map(r => (r.description ? `${r.text} (${r.description})` : r.text))
+}
+
+const TURN = { answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as const
+
+test('typeahead: the sdlc commands, then their arguments from the state', async ($, on) => {
+  const fake = fakeSdlc(on, { ...DRAFT, features: [...DRAFT.features, FEAT_B, CLOSED] })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  expect(await typeahead($, 'sd')).toEqual(['sdlc (SDLC commands only you can send)'])
+  expect(await typeahead($, 'sdlc a')).toEqual(['approve (approve intent, spec or plan)'])
+  expect(await typeahead($, 'SDLC U')).toEqual(['unlock (unlock the test files)'])
+  // Stages whose file exists, each with its state; plan.md is not written yet.
+  expect(await typeahead($, 'sdlc approve i')).toEqual(['intent (Approved)'])
+  expect(await typeahead($, 'sdlc approve s')).toEqual(['spec (Draft)'])
+  expect(await typeahead($, 'sdlc approve p')).toEqual([])
+  // Features to switch to: neither the active one nor a closed one.
+  expect(await typeahead($, 'sdlc feature f')).toEqual(['feat-b (Plan · Draft)'])
+  expect(await typeahead($, 'sdlc feature c')).toEqual([])
+  // `off` only while fast-track is on.
+  expect(await typeahead($, 'sdlc trivial o')).toEqual([])
+  fake.state = { ...fake.state, fasttrack: { by: 'Tester', at: '2026-10-06T10:00:00+02:00', reason: 'typo' } }
+  await fake.clock.advance(10_000)
+  expect(await typeahead($, 'sdlc trivial o')).toEqual(['off (end fast-track)'])
+  // Nothing for other prompts, a word past the argument, or one letter.
+  expect(await typeahead($, 'fix the sd')).toEqual([])
+  expect(await typeahead($, 'sdlc approve spec n')).toEqual([])
+  expect(await typeahead($, 's')).toEqual([])
+})
+
+test('typeahead: nothing where the SDLC is off', async ($, on) => {
+  fakeSdlc(on, { enabled: false })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  expect(await typeahead($, 'sdlc a')).toEqual([])
+})
+
+test('notifications: a failed verify, the review verdict and the PR', async ($, on) => {
+  const fake = fakeSdlc(on, BUILD)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+
+  fake.state = { ...fake.state, verify: { commands: ['npm test'], last: { ok: true, at: '2026-10-06T09:00:00+02:00', report: null } } }
+  await fake.clock.advance(10_000)
+  expect(fake.notes).toEqual([])
+  fake.state = { ...fake.state, verify: { commands: ['npm test'], last: { ok: false, at: '2026-10-06T10:00:00+02:00', report: null } } }
+  await fake.clock.advance(10_000)
+  fake.state = { ...fake.state, review: { verdict: 'changes', at: '2026-10-06T10:05:00+02:00', current: true } }
+  await fake.clock.advance(10_000)
+  fake.state = { ...fake.state, pr: { url: 'https://github.com/o/r/pull/12', at: null } }
+  await fake.clock.advance(10_000)
+  expect(fake.notes).toEqual([
+    'Verify failed: the Definition of Done is not met',
+    'Review: changes required',
+    'PR created: https://github.com/o/r/pull/12',
+  ])
+  // Each still shows as a toast too: the desktop has no notification channel.
+  expect(fake.toasts).toContain('PR created: https://github.com/o/r/pull/12')
+})
+
+test('notifications: a draft waits for approval, once per version, at the end of a turn', async ($, on) => {
+  const fake = fakeSdlc(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const settle = () => fake.clock.advance(1)
+
+  await $.turn.complete(TURN)
+  await settle()
+  expect(fake.notes).toEqual(['spec.md of feat-a waits for your approval'])
+  await $.turn.complete({ ...TURN, turnId: 't2' })
+  await settle()
+  expect(fake.notes).toHaveLength(1)
+
+  // A new version: a subagent's turn and an interrupted one say nothing; the next answer does.
+  const spec = fake.state.stages.spec as StageInfo
+  fake.state = { ...fake.state, stages: { ...fake.state.stages, spec: { ...spec, sha256: 'd'.repeat(64) } } }
+  await $.turn.complete({ ...TURN, turnId: 't3', agentId: 'agent-1' })
+  await $.turn.complete({ ...TURN, turnId: 't4', reason: 'aborted', isAborted: true })
+  await settle()
+  expect(fake.notes).toHaveLength(1)
+  await $.turn.complete({ ...TURN, turnId: 't5' })
+  await settle()
+  expect(fake.notes).toEqual(['spec.md of feat-a waits for your approval', 'spec.md of feat-a waits for your approval'])
+})
 
 for (const surface of ['terminal', 'desktop'] as const) {
   test(`${surface}: actions at spec: approve only`, async ($, on) => {
@@ -216,6 +319,8 @@ for (const surface of ['terminal', 'desktop'] as const) {
     fake.progressText = '- [x] Step 1: tests written\n'
     const band = await mount($, surface, 'AbovePrompt')
     expect(fake.tools).toEqual(['request_test_unlock'])
+    // In the tool list from the start: the verify skill tells Claude to call it.
+    expect(fake.deferred).toEqual([false])
     // Locked as the bug-fix flow plans it: the build goes on.
     expect((await band.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['feature', 'build', 'hide'])
 
@@ -347,6 +452,7 @@ for (const surface of ['terminal', 'desktop'] as const) {
 
   test(`${surface}: the band shows the feature, stage, status and Approve`, async ($, on) => {
     const fake = fakeSdlc(on)
+    const session = mock.session(on)
     const ui = await mount($, surface, 'AbovePrompt')
 
     expect(await ui.find({ text: /feat-a/ })).toBeDefined()
@@ -362,6 +468,11 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(fake.commands).toEqual(['sdlc approve spec'])
     expect(fake.toasts).toContain('The user (Tester) APPROVED spec.md of `feat-a` (sha256 bbbbbbbbbbbb)')
     expect(await ui.find({ key: 'approve' })).toBeUndefined()
+    // Claude reads what the press did as a note in the conversation, before the next prompt.
+    const notes = session.appended()
+    expect(notes.map(r => r.door)).toEqual(['note'])
+    expect(JSON.stringify(notes[0]?.message.content)).toContain(
+      'APPROVED spec.md of `feat-a` (sha256 bbbbbbbbbbbb). Next: plan. (The user pressed `sdlc approve spec` in the SDLC UI.)')
 
     // Write plan runs the skill directly, not /plan: plan mode would drop bypassPermissions.
     expect((await ui.find({ key: 'write' }))?.props.label).toBe('Write plan')
@@ -513,6 +624,19 @@ for (const surface of ['terminal', 'desktop'] as const) {
     await footer.press({ key: 'sdlc' })
     expect(await band.find({ key: 'open-intent.md' })).toBeUndefined()
     expect(await band.find({ key: 'approve' })).toBeDefined()
+  })
+
+  test(`${surface}: another feature is one row that makes it active`, async ($, on) => {
+    const fake = fakeSdlc(on, { ...DRAFT, features: [...DRAFT.features, FEAT_B, CLOSED] })
+    const { band } = await details($, surface)
+    expect(await band.find({ key: 'activate-closed' })).toBeUndefined()
+    const row = await band.find({ key: 'activate-feat-b' })
+    expect(row?.props.label).toBe('Make feat-b active')
+    expect(row?.props.plain).toBe(surface === 'desktop' ? true : undefined)
+    expect(JSON.stringify(row?.children)).toContain('Plan · Draft')
+
+    await band.press({ key: 'activate-feat-b' })
+    expect(fake.commands).toEqual(['sdlc feature feat-b'])
   })
 
   test(`${surface}: without SDLC the band stays empty until SDLC offers Init`, async ($, on) => {

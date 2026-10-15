@@ -13,7 +13,7 @@ that are enforced by hooks, not just requested in a prompt.
 | Hooks | `plugins/sdlc/hooks/hooks.json`, `scripts/sdlc.py` | Deterministic gates. The agent cannot skip them |
 | Skills | `plugins/sdlc/skills/*` | Per-stage playbooks and templates, loaded on demand |
 | Agent | `plugins/sdlc/agents/sdlc-reviewer.md` | Independent read-only reviewer for stage 5 |
-| UI | `plugins/sdlc/hooks/ui.tsx` | A band above the prompt and `SDLC` in the footer: state, next action, approvals by button. Shows state; enforces nothing |
+| UI | `plugins/sdlc/hooks/ui.tsx` | A band above the prompt and `SDLC` in the footer: state, next action, approvals by button, a typeahead for `sdlc ...` commands. Shows state; enforces nothing |
 | CLAUDE.md section | added by `/sdlc:init` | Short always-on rules for the repository |
 | `sdlc.config.json` | repo root | Opt-in switch plus verify commands. Without it the plugin does nothing |
 
@@ -69,6 +69,10 @@ In the desktop app a new session starts Claude Code with its first message, so t
 appears after that message. Any user command works as the first message: `sdlc status` shows
 the status without a model turn, and `sdlc approve spec` approves as the button does.
 
+The prompt's typeahead completes a typed `sdlc ...` command: the command, then its argument
+from the current state (the stages whose file exists, with their state, or the features you can
+make active). It only fills in the text; the command still runs when you send it.
+
 The build counts the numbered steps under `## Work sequence` in `plan.md` and the
 `- [x] Step N: ...` lines in `progress.md`. A plan without numbered steps counts as done when
 verify passes. A review counts while the code it read is unchanged: the `SubagentStop` hook
@@ -85,17 +89,23 @@ it and any code edit makes it stale. The PR URL comes from the output of `gh pr 
 - **Status**: build steps, the code gate, the last verify result, the review, a link to the PR,
   fast-track and the test lock.
 - **Actions**: the next action, `Run verify`, `Show changes` (the Diff pane), `Review`,
-  `Close feature`, `Unlock tests`, `End fast-track`, and `Make active` for other features.
+  `Close feature`, `Unlock tests` and `End fast-track`.
+- **Other features**: one row per open feature with its stage; a row makes that feature active
+  (`sdlc feature <slug>`).
 - `Init SDLC` (runs `/sdlc:init`) in a repository without `sdlc.config.json`.
 
-A user-only button (`Approve`, `Unlock tests`, `Close feature`, `End fast-track`, `Make active`)
+A user-only button (`Approve`, `Unlock tests`, `Close feature`, `End fast-track`, a row of
+Other features)
 sends the same `sdlc ...` line through the same `UserPromptSubmit` handler a typed command
 reaches, so `approvals.json` and `audit.log` look the same. The agent cannot press a button.
 `Approve` and `Close feature` wait while Claude's turn runs, because the file may still be half
 written. If the artifact changed after it was shown, nothing is approved. A skill button runs
 its slash command at once, as if the person typed it. Toasts report an approval that went
 stale, the code gate opening or closing, verify passing or failing, the review verdict and the
-new PR.
+new PR. In a terminal with a notification channel (iTerm2, kitty or Ghostty; a bell only
+rings), a native notification also reports a failed verify, the review verdict, the new PR, and
+an artifact that waits for approval when Claude's turn ends (once per version of the file). The
+desktop app has no such channel, so there the toasts alone show.
 
 ## Plan mode
 
@@ -113,19 +123,21 @@ approve that file (`Approve plan` or `sdlc approve plan`).
 
 The tests stay locked until the person unlocks them. Claude can only ask: the plugin gives it a
 `request_test_unlock` tool (`mcp__sdlc__request_test_unlock`), which turns the band's action into
-`Unlock tests`. The tool itself unlocks nothing.
+`Unlock tests`. The tool itself unlocks nothing. Its schema is in Claude's tool list from the
+start, not behind ToolSearch, because the verify skill tells Claude to call it.
 
-The UI is a Claude Mod: a function-hooks module (`hooks/ui.tsx`). Mods are on by default in
-Claude Code 2.1.287 or newer in the terminal, and 2.1.286 or newer in the Code tab of the
-Desktop app. Tested with 2.1.291. Older versions skip the module and log that it did not load;
-the gates keep working because they are command hooks. In `claude -p` the module runs but
+The UI is a Claude Mod: a function-hooks module (`hooks/ui.tsx`). It needs Claude Code 2.1.293
+or newer, in the terminal and in the Code tab of the Desktop app: it hooks the prompt's
+typeahead, which older versions do not have. Native notifications need 2.1.295; on 2.1.293 and
+2.1.294 the toasts alone show. Tested with 2.1.295. Older versions skip the module and log that
+it did not load; the gates keep working because they are command hooks. In `claude -p` the module runs but
 draws nothing, so there is no band.
 
 The agent has a safe CLI on its PATH: `sdlc status | state [--session ID] | features | new <slug> [type] | lock-tests`. `state` prints the status as JSON for UIs.
 
 ## Install
 
-Requirements: Claude Code 2.1.287+ (for the UI; the gates work on older versions),
+Requirements: Claude Code 2.1.293+ (for the UI; the gates work on older versions),
 `python3` (3.9+) and `git`.
 
 In an interactive `claude` terminal:
@@ -253,7 +265,7 @@ docs/sdlc/<feature>/
 cd plugins/sdlc && python3 -m unittest discover -s tests -v
 ```
 
-The UI module has its own tests and type check (Claude Code 2.1.284+, TypeScript 5.4+):
+The UI module has its own tests and type check (Claude Code 2.1.293+, TypeScript 5.4+):
 
 ```bash
 claude plugin validate plugins/sdlc && claude plugin test plugins/sdlc

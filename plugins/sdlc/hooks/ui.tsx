@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Approval, ExtraFiles, SdlcState, Stage, StageInfo } from '../types'
+import type { Approval, ExtraFiles, FeatureInfo, SdlcState, Stage, StageInfo } from '../types'
 
 // The gates stay in sdlc.py (command hooks). This module only shows their state and
 // sends user-only commands through the same UserPromptSubmit handler a typed
@@ -14,6 +14,8 @@ import type { Approval, ExtraFiles, SdlcState, Stage, StageInfo } from '../types
 //   where the repository has no SDLC yet) and folds it back.
 // Actions that start a skill run its slash command at once, as if the person typed it.
 // Claude can only ask for a test unlock (the `request_test_unlock` tool); the person presses it.
+// The prompt's typeahead completes a typed `sdlc ...` command, and a terminal's native
+// notifications report what the person may be waiting on away from the screen.
 
 const REFRESH_MS = 10_000
 const STAGES: readonly Stage[] = ['intent', 'spec', 'plan']
@@ -31,10 +33,13 @@ const hiddenAtom = atom({ plugin: 'sdlc', key: 'hidden' } as const, false)
 const unlockAtom = atom({ plugin: 'sdlc', key: 'unlockRequest' } as const, null)
 
 // The model's way to ask for the test lock to be lifted. It unlocks nothing: the band then
-// offers `Unlock tests`, and only the person's press (or typed command) unlocks.
+// offers `Unlock tests`, and only the person's press (or typed command) unlocks. The verify
+// skill tells Claude to call it, so its schema sits in the tool list rather than behind
+// ToolSearch.
 const UNLOCK_TOOL = 'request_test_unlock'
 const UNLOCK_TOOL_SPEC = {
   name: UNLOCK_TOOL,
+  isDeferred: false,
   description:
     'Ask the user to unlock the SDLC test lock. Call it when a locked test file has to change: ' +
     'the test itself is wrong, or a review found cases that need new tests. It does not unlock ' +
@@ -110,6 +115,17 @@ async function statFiles($: EngineInterface, s: SdlcState): Promise<ExtraFiles> 
   return { progress: await isFile('progress.md'), approvals: await isFile('approvals.json'), steps }
 }
 
+/** A native notification through the person's own channel, for what they may be waiting on
+ *  away from the screen. Only a terminal has a channel (the desktop answers `no-surface`),
+ *  so it goes beside a toast, never in its place. */
+function notify($: EngineInterface, text: string) {
+  try {
+    void $.ui.notify(text, { title: 'SDLC' }).catch(() => undefined)
+  } catch {
+    // an engine before 2.1.295 has no $.ui.notify: the toast alone shows
+  }
+}
+
 function announce($: EngineInterface, prev: SdlcState | null, next: SdlcState) {
   if (!prev || !prev.enabled || !next.enabled) return
   if (prev.active === next.active) {
@@ -127,14 +143,36 @@ function announce($: EngineInterface, prev: SdlcState | null, next: SdlcState) {
     $.ui.toast(last.ok ? 'SDLC verify passed' : 'SDLC verify failed: Definition of Done not met', {
       timeoutMs: last.ok ? 4000 : 8000,
     })
+    // A pass ends the turn, which the engine announces itself; a failure keeps Claude working.
+    if (!last.ok) notify($, 'Verify failed: the Definition of Done is not met')
   }
   if (prev.active !== next.active) return
   const review = next.review
   if (review && review.at !== prev.review?.at) {
     $.ui.toast(review.verdict === 'ready' ? 'SDLC review passed: the PR is next'
       : 'SDLC review: changes required', { timeoutMs: 8000 })
+    notify($, review.verdict === 'ready' ? 'Review passed: the PR is next' : 'Review: changes required')
   }
-  if (next.pr && next.pr.url !== prev.pr?.url) $.ui.toast(`PR created: ${next.pr.url}`, { timeoutMs: 8000 })
+  if (next.pr && next.pr.url !== prev.pr?.url) {
+    $.ui.toast(`PR created: ${next.pr.url}`, { timeoutMs: 8000 })
+    notify($, `PR created: ${next.pr.url}`)
+  }
+}
+
+/** The draft the person was last told about, so each version of an artifact is announced
+ *  once. A reload forgets it and announces the draft that waits once more. */
+let announcedDraft = ''
+
+/** At the end of Claude's turn: the stage's artifact, written or changed, waits for the
+ *  person's approval. */
+function announceDraft($: EngineInterface, s: SdlcState | null) {
+  if (!s || !s.enabled || !s.active || !s.stage || s.stage === 'build') return
+  const info = s.stages[s.stage]
+  if (!info?.sha256 || (info.state !== 'draft' && info.state !== 'stale')) return
+  const key = `${s.active}/${s.stage}/${info.sha256}`
+  if (key === announcedDraft) return
+  announcedDraft = key
+  notify($, `${s.stage}.md of ${s.active} waits for your approval`)
 }
 
 async function refresh($: EngineInterface): Promise<SdlcState | null> {
@@ -193,11 +231,9 @@ async function press($: EngineInterface, line: string): Promise<string | null> {
       $.ui.toast(`sdlc: \`${line}\` failed; type it in the chat instead`, { timeoutMs: 8000 })
       return null
     }
-    // The record is already written; if the note to the model is refused (or the engine
-    // predates $.session.append, as 2.1.284 does), the model still reads the new state
-    // in the next prompt's [SDLC] status line.
+    // The record is already written; if the note to the model is refused, the model still
+    // reads the new state in the next prompt's [SDLC] status line.
     try {
-      // @ts-ignore -- missing from the 2.1.284 types; the validator needs the plain `$.` call
       await $.session.append({
         message: {
           type: 'user',
@@ -353,6 +389,52 @@ function nextAction($: EngineInterface, s: On, steps: Steps = NO_STEPS): Action 
   return null
 }
 
+// ---------------------------------------------------------------------- typeahead
+
+/** The `sdlc ...` commands only the person may send, as sdlc.py reads them. */
+const VERBS: readonly Suggestion[] = [
+  { text: 'approve', description: 'approve intent, spec or plan' },
+  { text: 'skip', description: 'skip the spec: sdlc skip spec <reason>' },
+  { text: 'trivial', description: 'fast-track a small change; off ends it' },
+  { text: 'unlock', description: 'unlock the test files' },
+  { text: 'feature', description: 'make another feature active' },
+  { text: 'done', description: 'close the active feature' },
+  { text: 'status', description: 'show the SDLC status' },
+]
+
+type Suggestion = { text: string; description?: string }
+
+/** Rows for the word being typed in a `sdlc ...` line: `sdlc`, the verb, then its one
+ *  argument, taken from the state the band shows. */
+function suggest(s: SdlcState | null, words: string[], token: string): Suggestion[] {
+  if (!s || !s.enabled) return []
+  const prefix = token.toLowerCase()
+  const starting = (rows: readonly Suggestion[]) => rows.filter(r => r.text.startsWith(prefix))
+  if (words.length === 0) {
+    return prefix.length >= 2 ? starting([{ text: 'sdlc', description: 'SDLC commands only you can send' }]) : []
+  }
+  if (words[0]?.toLowerCase() !== 'sdlc' || words.length > 2) return []
+  if (words.length === 1) return starting(VERBS)
+  switch (words[1]?.toLowerCase()) {
+    case 'approve':
+      return starting(STAGES.flatMap(stage => {
+        const info = s.stages[stage]
+        if (!info || info.state === 'missing' || info.state === 'skipped') return []
+        return [{ text: stage, description: stageValueText(info) }]
+      }))
+    case 'skip':
+      return starting([{ text: 'spec', description: 'then the reason' }])
+    case 'trivial':
+      return s.fasttrack ? starting([{ text: 'off', description: 'end fast-track' }]) : []
+    case 'unlock':
+      return starting([{ text: 'tests', description: s.tests_locked ? 'Locked' : 'not locked' }])
+    case 'feature':
+      return starting(otherFeatures(s).map(f => ({ text: f.slug, description: featureText(f) })))
+    default:
+      return []
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -396,8 +478,19 @@ export const register: Register = on => {
 
   on('turn.complete', async ($, e, next) => {
     const result = await next(e)
-    void refresh($)
+    // Only the main loop's answer ends Claude's work; a subagent's turn ends inside it.
+    const isMain = !e.agentId && e.reason === 'answer'
+    void refresh($).then(s => (isMain ? announceDraft($, s) : undefined))
     return result
+  })
+
+  // The prompt's typeahead: the `sdlc ...` commands and their arguments, from the state
+  // the band already holds, beneath the engine's own rows.
+  on('prompt.autocomplete', async ($, e, next) => {
+    const result = await next(e)
+    const words = e.text.slice(0, e.start).trim().split(/\s+/).filter(Boolean)
+    const mine = suggest(await read($, stateAtom), words, e.token)
+    return mine.length > 0 ? { suggestions: [...result.suggestions, ...mine] } : result
   })
 
   // The prompt footer: the session modes as the engine draws them, then `SDLC`,
@@ -498,6 +591,10 @@ const STATE_WORD: Record<string, string> = {
   stale: 'Changed',
   missing: 'Not started',
 }
+// Status words take the person's theme colors (theme keys), so they read in a light, dark or
+// colorblind-friendly theme alike. The desktop's vector bars and rules draw in their own colors.
+const ERROR = 'error'
+const WARNING = 'warning'
 const ACCENT = '#5b8def'
 const TRACK = 'rgba(128,128,128,0.28)'
 
@@ -535,7 +632,7 @@ function Summary(els: Els, $: EngineInterface, s: On, steps: Steps) {
         {isFile ? where.slice(where.indexOf('·')) : where}
       </Text>
       {warn ? (
-        <Text color="red" wrap="truncate-end">
+        <Text color={warn === 'tests locked' ? WARNING : ERROR} wrap="truncate-end">
           {warn}
         </Text>
       ) : null}
@@ -653,10 +750,8 @@ function TitleButton({ Box, Button, surface }: Els, $: EngineInterface, title: s
 /** The desktop's horizontal padding of a plain button, in cells (about 6 px). */
 const TITLE_INSET = -0.75
 
-/** One row of a section's table: what, its state, and the action that applies to it. */
-type Line = { key: string; label: unknown; labelText: string; value: unknown; valueText: string; action?: unknown }
-
-const ACTION_WIDTH = 12
+/** One row of a section's table: what, and its state. */
+type Line = { key: string; label: unknown; labelText: string; value: unknown; valueText: string }
 
 /** A titled table. Its label and value columns are as wide as their longest entry, so the
  *  states line up; `minWidth` lets sections sit side by side and wrap when room runs out. */
@@ -664,10 +759,8 @@ function Section(els: Els, key: string, title: string, lines: Line[]) {
   const { Box, Text } = els
   const labelWidth = Math.max(...lines.map(l => l.labelText.length)) + 3
   const valueWidth = Math.max(...lines.map(l => l.valueText.length)) + 3
-  const hasActions = lines.some(l => l.action)
   return (
-    <Box key={key} flexDirection="column" flexShrink={0}
-      minWidth={labelWidth + valueWidth + (hasActions ? ACTION_WIDTH : 0)}>
+    <Box key={key} flexDirection="column" flexShrink={0} minWidth={labelWidth + valueWidth}>
       {SectionTitle(els, title)}
       {lines.map(l => (
         <Box key={l.key}>
@@ -677,9 +770,39 @@ function Section(els: Els, key: string, title: string, lines: Line[]) {
           <Box width={valueWidth} flexShrink={0}>
             {typeof l.value === 'string' ? <Text dimColor wrap="truncate-end">{l.value}</Text> : l.value}
           </Box>
-          {l.action ?? null}
         </Box>
       ))}
+    </Box>
+  )
+}
+
+/** Features beside the active one that are not closed: the ones `sdlc feature` switches to. */
+function otherFeatures(s: On): FeatureInfo[] {
+  return s.features.filter(f => f.slug !== s.active && !f.done)
+}
+
+/** Where another feature stands, in words: "Spec · Draft". */
+function featureText(f: FeatureInfo): string {
+  return `${STAGE_NAME[f.stage]}${f.stage_state ? ` · ${STATE_WORD[f.stage_state] ?? f.stage_state}` : ''}`
+}
+
+/** The other features, one Button a row that makes its feature active. The name is the
+ *  row's address and its stage a dim part, so a stage that moves keeps the address. The
+ *  terminal draws each in brackets, so it reads as a control; the desktop as a list row. */
+function OtherFeatures(els: Els, $: EngineInterface, features: FeatureInfo[], busy: boolean) {
+  const { Box, Text, Button } = els
+  return (
+    <Box key="others" flexDirection="column" flexShrink={0}>
+      {SectionTitle(els, 'Other features')}
+      <Box flexDirection="column" alignItems="flex-start" rowGap={els.surface === 'desktop' ? 0.5 : 0}>
+        {features.map(f => (
+          <Button key={`activate-${f.slug}`} label={`Make ${f.slug} active`}
+            {...(els.surface === 'desktop' ? { plain: true } : {})}
+            onPress={() => (busy ? undefined : press($, `sdlc feature ${f.slug}`))}>
+            {f.slug} <Text dimColor>{featureText(f)}</Text>
+          </Button>
+        ))}
+      </Box>
     </Box>
   )
 }
@@ -722,7 +845,7 @@ function Details(
     return (
       <Box flexDirection="column" gap={1}>
         {Head(els, $, 'SDLC', close)}
-        <Text color="red">{error}</Text>
+        <Text color={ERROR}>{error}</Text>
         <Box>
           <Button key="retry" label="Retry" {...keys(els, 'r')} onPress={() => void refresh($)} />
         </Box>
@@ -745,9 +868,6 @@ function Details(
 
   const dir = featureDir(s)
   const action = nextAction($, s, files.steps)
-  const button = (key: string, label: string, run: () => unknown, hotkey: string, isPrimary = false) => (
-    <Button key={key} label={label} {...keys(els, hotkey, isPrimary)} onPress={() => (busy ? undefined : run())} />
-  )
 
   const artifacts: Line[] = STAGES.map(stage => {
     const info = s.stages[stage]
@@ -757,7 +877,7 @@ function Details(
       key: stage,
       label: FileName(els, $, s.root, info?.path ?? `${dir}/${stage}.md`, exists),
       labelText: `${stage}.md`,
-      value: info?.state === 'stale' ? <Text color="red">{valueText}</Text> : valueText,
+      value: info?.state === 'stale' ? <Text color={WARNING}>{valueText}</Text> : valueText,
       valueText,
     }
   })
@@ -783,14 +903,14 @@ function Details(
       : []),
     { key: 'gate', label: 'Code gate', labelText: 'Code gate', value: gate, valueText: gate },
     { key: 'verify', label: 'Verify', labelText: 'Verify',
-      value: last && !last.ok ? <Text color="red">{verify}</Text> : verify, valueText: verify },
+      value: last && !last.ok ? <Text color={ERROR}>{verify}</Text> : verify, valueText: verify },
   ]
   if (s.stage === 'build') {
     const review = reviewState(s)
     const reviewText = review === 'ready' ? 'Passed' : review === 'changes' ? 'Changes required'
       : s.review ? 'Out of date' : 'Not run'
     status.push({ key: 'review', label: 'Review', labelText: 'Review',
-      value: review === 'changes' ? <Text color="red">{reviewText}</Text> : reviewText, valueText: reviewText })
+      value: review === 'changes' ? <Text color={ERROR}>{reviewText}</Text> : reviewText, valueText: reviewText })
   }
   if (s.pr) {
     const url = s.pr.url
@@ -802,9 +922,10 @@ function Details(
     status.push({ key: 'fasttrack', label: 'Fast-track', labelText: 'Fast-track', value: 'On', valueText: 'On' })
   }
   if (s.tests_locked) {
-    // A short value keeps the three sections side by side; red marks Claude's unlock request.
+    // A short value keeps the three sections side by side; the warning color marks Claude's
+    // unlock request.
     status.push({ key: 'tests', label: 'Tests', labelText: 'Tests',
-      value: unlock ? <Text color="red">Locked</Text> : 'Locked', valueText: 'Locked' })
+      value: unlock ? <Text color={WARNING}>Locked</Text> : 'Locked', valueText: 'Locked' })
   }
 
   // What the person can do now, one button per line.
@@ -836,13 +957,7 @@ function Details(
     actions.push({ key: 'fasttrack-end', label: 'End fast-track', run: () => press($, 'sdlc trivial off'), hotkey: 'f' })
   }
   if (!s.active && !s.fasttrack) actions.push({ ...fastTrackAction($), hotkey: 't' })
-  const others: Line[] = s.features
-    .filter(f => f.slug !== s.active && !f.done)
-    .map(f => {
-      const valueText = `${STAGE_NAME[f.stage]}${f.stage_state ? ` · ${STATE_WORD[f.stage_state] ?? f.stage_state}` : ''}`
-      return { key: f.slug, label: f.slug, labelText: f.slug, value: valueText, valueText,
-        action: button(`activate-${f.slug}`, 'Make active', () => press($, `sdlc feature ${f.slug}`), '') }
-    })
+  const others = otherFeatures(s)
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -866,7 +981,7 @@ function Details(
             </Box>
           </Box>
         ) : null}
-        {others.length > 0 ? Section(els, 'others', 'Other features', others) : null}
+        {others.length > 0 ? OtherFeatures(els, $, others, busy) : null}
       </Box>
     </Box>
   )
