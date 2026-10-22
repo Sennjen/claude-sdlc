@@ -1,6 +1,6 @@
 {
   "name": "ai-sdlc",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "AI-native SDLC with human approvals, code and test gates, verification, and independent review.",
   "author": {
     "name": "Yevhenii Dziubenko",
