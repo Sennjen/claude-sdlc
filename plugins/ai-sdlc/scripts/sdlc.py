@@ -462,7 +462,8 @@ def check_target(p, rel, sid, via_bash=False):
 
 REDIRECT = re.compile(r"(?:^|[^<>&0-9])[0-9]*>{1,2}\|?\s*(?!&)([^\s;&|<>()]+)")
 SAFE_SINKS = ("/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty")
-TMP_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/", "$TMPDIR", "${TMPDIR")
+TMP_VARS = ("$TMPDIR", "${TMPDIR")
+TMP_PREFIXES = ("/tmp/", "/private/tmp/", "/var/folders/") + TMP_VARS
 INPLACE = re.compile(r"^(sed|gsed|perl|ruby)$")
 
 
@@ -702,7 +703,9 @@ def bash_write_targets(cmd, cwd=None):
         t = t.strip("'\"")
         if t and t != "?":
             t = os.path.normpath(t)
-        if not t or t in SAFE_SINKS or t.startswith(TMP_PREFIXES):
+        # A literal temp path can still be inside the repo (a checkout under /tmp), so the
+        # caller's repo check decides. Only $TMPDIR, which the hook cannot expand, is skipped.
+        if not t or t in SAFE_SINKS or t.startswith(TMP_VARS):
             continue
         clean.append(t)
     return clean

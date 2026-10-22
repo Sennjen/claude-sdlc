@@ -20,8 +20,8 @@ def sh(cwd, *cmd):
 
 
 class HookTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+    def setUp(self, parent=None):
+        self.tmp = tempfile.TemporaryDirectory(dir=parent)
         self.root = os.path.realpath(self.tmp.name)
         sh(self.root, "git", "init", "-q")
         sh(self.root, "git", "config", "user.name", "Tester")
@@ -231,6 +231,23 @@ class HookTest(unittest.TestCase):
             ('echo x > "src/app.js"', "deny"),
             ("echo x > 'src/app.js'", "deny"),
             ('echo "a > b" > /tmp/sdlc-out', "allow"),
+        ])
+
+    def test_repo_under_tmp_is_still_gated(self):
+        # Temp paths are exempt only outside the repo. The repo sits under /tmp whatever TMPDIR
+        # says (/private/tmp once resolved on macOS), and both spellings must reach the gate.
+        self.tmp.cleanup()
+        self.setUp("/tmp")
+        tmp_spelling = "/tmp/" + os.path.basename(self.root)
+        self.assertBash([
+            ("cp x %s/src/app.js" % self.root, "deny"),
+            ("cp x %s/src/app.js" % tmp_spelling, "deny"),
+            ("echo x > %s/src/app.js" % self.root, "deny"),
+            ("S=%s/src; cp x $S/app.js" % tmp_spelling, "deny"),
+            ("echo x > %s/.sdlc/state.json" % self.root, "deny"),
+            ("echo '{}' > %s/docs/sdlc/feat-a/approvals.json" % tmp_spelling, "deny"),
+            ("cp src/app.js /tmp/sdlc-out", "allow"),
+            ("cp src/app.js $TMPDIR/sdlc-out", "allow"),
         ])
 
     # fix-sed-inplace-parsing: the code gate is closed (no feature); /tmp/x is outside the repo.
