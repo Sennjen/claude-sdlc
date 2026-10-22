@@ -1,21 +1,26 @@
 ---
 name: init
-description: Enable the AI-native SDLC in the current repository - creates sdlc.config.json, the CLAUDE.md SDLC section, REVIEW.md and docs/sdlc/. Use when the user asks to set up, enable or install the SDLC workflow in a project.
+description: "Enable the AI-native SDLC in the current repository - creates sdlc.config.json, repository instructions, REVIEW.md and docs/sdlc/. Use when the user asks to set up, enable or install the SDLC workflow in a project."
 disable-model-invocation: true
 ---
 
 # Enable the SDLC in this repository
 
 The plugin's hooks stay inert until `sdlc.config.json` exists at the repo root, so write
-that file **last** (after it exists, CLAUDE.md and REVIEW.md become protected paths).
+that file **last** (after it exists, repository instructions and REVIEW.md become protected paths).
+
+In Codex, first confirm the plugin's lifecycle hooks are enabled and trusted. If they
+are skipped or unavailable, report that the workflow has no automatic enforcement.
 
 1. **Detect the verification commands.** Inspect `package.json` scripts, `Makefile`,
    `pyproject.toml`, `build.gradle`, `Package.swift`, `Cargo.toml`, CI workflows. Find the
    single commands for test, lint/format check, type check and build. Prefer fast,
    non-interactive, non-watch variants (e.g. `npm test -- --watch=false`, `CI=1`).
    Show the list to the user and confirm it before continuing.
-2. **CLAUDE.md.** Merge the section from [claude-md-snippet.md](claude-md-snippet.md) into
-   the repo-root `CLAUDE.md` (create it if missing, keep existing content). Fill in the real
+2. **Repository instructions.** In Codex, merge
+   [agents-md-snippet.md](agents-md-snippet.md) into repo-root `AGENTS.md`. In Claude Code,
+   merge [claude-md-snippet.md](claude-md-snippet.md) into `CLAUDE.md`.
+   Create the target if missing and preserve existing content. Fill in the real
    commands. Keep the whole file under roughly one page: commands, conventions,
    architecture, common mistakes. If an architecture overview is missing, add 3-6 lines.
 3. **REVIEW.md.** If absent, create it from [review-template.md](review-template.md) and
@@ -32,7 +37,13 @@ that file **last** (after it exists, CLAUDE.md and REVIEW.md become protected pa
    - the user-only chat commands: `sdlc approve intent|spec|plan`, `sdlc skip spec <reason>`,
      `sdlc trivial [reason|off]`, `sdlc unlock tests`, `sdlc feature <slug>`, `sdlc done`,
      `sdlc status`;
-   - recommended repo settings outside Claude: branch protection with required human
-     review, CODEOWNERS for critical paths, Claude PR review (the managed Code Review
-     service or `anthropics/claude-code-action` driven by REVIEW.md);
+   - recommended repo settings: branch protection with required human review,
+     CODEOWNERS for critical paths, a CI review integration driven by `REVIEW.md`, a CI
+     security review (on GitHub, the `anthropics/claude-code-security-review` Action), and
+     the branch protection rule that requires every review conversation to be resolved
+     before merge;
+   - in supported Codex clients, `$ai-sdlc:status` embeds an interactive status block in chat in place of the Claude bar;
+     card buttons send guarded `sdlc ui ...` user messages; protected edits and gated
+     deploy commands must be performed by the user outside the agent because Codex
+     hooks cannot show an interactive approval request;
    - that they should commit the new files.

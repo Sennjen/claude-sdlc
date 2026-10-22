@@ -1,6 +1,6 @@
 ---
 name: plan
-description: SDLC stage 3a (Build planning) - produce docs/sdlc/<feature>/plan.md from an approved spec, interviewing the engineer, before any code is written. Use when the spec is approved (or skipped) and plan.md is missing, in draft or stale, or the SDLC status says the current stage is plan.
+description: "SDLC stage 3a (Build planning) - produce docs/sdlc/FEATURE/plan.md from an approved spec, interviewing the engineer, before any code is written. Use when the spec is approved (or skipped) and plan.md is missing, in draft or stale, or the SDLC status says the current stage is plan."
 ---
 
 # Stage 3a - Implementation plan
@@ -8,7 +8,12 @@ description: SDLC stage 3a (Build planning) - produce docs/sdlc/<feature>/plan.m
 Design review happens here, while changing course is still a matter of editing a
 document. Code edits stay blocked by hooks until the user approves this plan.
 
-**Plan mode.** The playbook drafts the plan in Claude Code plan mode, where you can read the
+**Codex plan mode.** If file writes are unavailable, present the plan using the template's
+sections. After leaving plan mode, save it unchanged to `docs/sdlc/<slug>/plan.md`.
+Accepting a conversational plan does not approve that file: the user must still type
+`sdlc approve plan`. Otherwise, write `plan.md` directly using `apply_patch`.
+
+**Claude Code plan mode.** The playbook drafts the plan in Claude Code plan mode, where you can read the
 codebase but not change it. The SDLC bar's *Write plan* runs this skill in the current mode;
 the user enters plan mode only by choice (`Shift+Tab`). If the session is in plan mode:
 - do steps 1 and 2 as below, then present the plan with ExitPlanMode instead of writing
@@ -20,7 +25,8 @@ the user enters plan mode only by choice (`Shift+Tab`). If the session is in pla
 
 Outside plan mode, follow the same steps and write `plan.md` directly.
 
-1. **Read** `spec.md` (or `intent.md` if the spec was skipped), `CLAUDE.md`, and the code
+1. **Read** `spec.md` (or `intent.md` if the spec was skipped), repository instructions
+   (`AGENTS.md` in Codex, `CLAUDE.md` in Claude Code), and the code
    you will touch. Explore enough to name concrete files and functions.
 2. **Interview the engineer.** Ask about the choices that matter: approach alternatives,
    risky areas, migration strategy, test strategy. Recommend an option; don't just list them.

@@ -1,0 +1,20 @@
+{
+  "name": "ai-sdlc",
+  "interface": {
+    "displayName": "AI-native SDLC"
+  },
+  "plugins": [
+    {
+      "name": "ai-sdlc",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ai-sdlc"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

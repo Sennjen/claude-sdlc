@@ -1,6 +1,6 @@
 ---
 name: spec
-description: SDLC stage 2 (Design) - turn an approved intent.md into docs/sdlc/<feature>/spec.md with requirements, acceptance criteria, design and flagged concerns. Use when intent.md is approved and spec.md is missing or in draft, or the SDLC status says the current stage is spec.
+description: "SDLC stage 2 (Design) - turn an approved intent.md into docs/sdlc/FEATURE/spec.md with requirements, acceptance criteria, design and flagged concerns. Use when intent.md is approved and spec.md is missing or in draft, or the SDLC status says the current stage is spec."
 ---
 
 # Stage 2 - Requirements and design
@@ -8,7 +8,8 @@ description: SDLC stage 2 (Design) - turn an approved intent.md into docs/sdlc/<
 Input: the approved `intent.md` of the active feature. Output: `spec.md` from
 [template.md](template.md), ready for a human to approve.
 
-1. **Read** `intent.md`, `CLAUDE.md`, and the code areas named under affected systems.
+1. **Read** `intent.md`, repository instructions (`AGENTS.md` in Codex, `CLAUDE.md` in
+   Claude Code), and the code areas named under affected systems.
 2. **Apply organisational constraints.** Load every relevant skill available in this
    session (security, compliance, brand, UX, API standards, accessibility...) and treat
    them as hard constraints. Record which ones you applied.

@@ -1,5 +1,5 @@
 ---
 type: tool_used
 tool: Agent
-input_match: 'sdlc-reviewer'
+input_match: '"subagent_type"\s*:\s*"(?:[\w-]+:)?sdlc-reviewer"'
 ---

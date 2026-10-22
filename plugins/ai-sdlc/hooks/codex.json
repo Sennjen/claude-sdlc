@@ -1,0 +1,41 @@
+{
+  "description": "SDLC gates for Codex. Review and trust these hooks before use.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"${PLUGIN_ROOT}/scripts/codex.py\" prompt", "timeout": 20 }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|apply_patch|exec_command|shell_command|shell|Edit|Write|MultiEdit|NotebookEdit)$",
+        "hooks": [
+          { "type": "command", "command": "python3 \"${PLUGIN_ROOT}/scripts/codex.py\" pre-tool", "timeout": 15 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"${PLUGIN_ROOT}/scripts/codex.py\" post-tool", "timeout": 15 }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"${PLUGIN_ROOT}/scripts/codex.py\" subagent-stop", "timeout": 30 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 \"${PLUGIN_ROOT}/scripts/codex.py\" stop", "timeout": 1200 }
+        ]
+      }
+    ]
+  }
+}

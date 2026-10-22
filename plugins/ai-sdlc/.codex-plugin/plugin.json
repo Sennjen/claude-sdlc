@@ -1,0 +1,21 @@
+{
+  "name": "ai-sdlc",
+  "version": "0.9.0",
+  "description": "AI-native SDLC with human approvals, code and test gates, verification, and independent review.",
+  "author": {
+    "name": "Yevhenii Dziubenko",
+    "url": "https://github.com/Sennjen"
+  },
+  "homepage": "https://github.com/Sennjen/claude-sdlc#readme",
+  "repository": "https://github.com/Sennjen/claude-sdlc",
+  "license": "MIT",
+  "skills": "./skills/",
+  "hooks": "./hooks/codex.json",
+  "interface": {
+    "displayName": "AI-native SDLC",
+    "shortDescription": "Plan, approve, build, verify, and review changes",
+    "longDescription": "A local SDLC workflow with native chat status cards, guarded action buttons, hash-bound approvals, locked regression tests, and verification hooks. Includes nine skills. Requires trusted lifecycle hooks in a supported local Codex client.",
+    "developerName": "Yevhenii Dziubenko",
+    "category": "Developer Tools"
+  }
+}

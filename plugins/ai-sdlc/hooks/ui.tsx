@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Approval, ExtraFiles, FeatureInfo, SdlcState, Stage, StageInfo } from '../types'
+import type { Approval, ExtraFiles, FeatureInfo, ReviewInfo, SdlcState, Stage, StageInfo } from '../types'
 
 // The gates stay in sdlc.py (command hooks). This module only shows their state and
 // sends user-only commands through the same UserPromptSubmit handler a typed
@@ -147,16 +147,22 @@ function announce($: EngineInterface, prev: SdlcState | null, next: SdlcState) {
     if (!last.ok) notify($, 'Verify failed: the Definition of Done is not met')
   }
   if (prev.active !== next.active) return
-  const review = next.review
-  if (review && review.at !== prev.review?.at) {
-    $.ui.toast(review.verdict === 'ready' ? 'SDLC review passed: the PR is next'
-      : 'SDLC review: changes required', { timeoutMs: 8000 })
-    notify($, review.verdict === 'ready' ? 'Review passed: the PR is next' : 'Review: changes required')
-  }
+  announceReview($, 'review', prev.review, next.review, next)
+  announceReview($, 'security review', prev.security, next.security, next)
   if (next.pr && next.pr.url !== prev.pr?.url) {
     $.ui.toast(`PR created: ${next.pr.url}`, { timeoutMs: 8000 })
     notify($, `PR created: ${next.pr.url}`)
   }
+}
+
+/** A reviewer's new verdict, as a toast and a notification. The PR is next once both reviews
+ *  of the current code passed. */
+function announceReview($: EngineInterface, name: string, prev: ReviewInfo | null, next: ReviewInfo | null, s: On) {
+  if (!next || next.at === prev?.at) return
+  const what = next.verdict === 'changes' ? `${name}: changes required`
+    : reviewState(s) === 'ready' ? `${name} passed: the PR is next` : `${name} passed`
+  $.ui.toast(`SDLC ${what}`, { timeoutMs: 8000 })
+  notify($, what.charAt(0).toUpperCase() + what.slice(1))
 }
 
 /** The draft the person was last told about, so each version of an artifact is announced
@@ -337,10 +343,12 @@ async function approve($: EngineInterface, shown: Approval) {
   }
 }
 
-/** The review of the code as it is now: `ready`, `changes`, or `none` (never run, or the
- *  code changed since). */
+/** Both reviews of the code as it is now: `changes` when either asks for changes, `ready`
+ *  when both passed, `none` otherwise (one never ran, or the code changed since). */
 function reviewState(s: On): 'ready' | 'changes' | 'none' {
-  return s.review?.current ? s.review.verdict : 'none'
+  const reviews = [s.review, s.security]
+  if (reviews.some(r => r?.current && r.verdict === 'changes')) return 'changes'
+  return reviews.every(r => r?.current && r.verdict === 'ready') ? 'ready' : 'none'
 }
 
 /** Whether every plan step is done; a plan without numbered steps counts as done when
@@ -906,11 +914,13 @@ function Details(
       value: last && !last.ok ? <Text color={ERROR}>{verify}</Text> : verify, valueText: verify },
   ]
   if (s.stage === 'build') {
-    const review = reviewState(s)
-    const reviewText = review === 'ready' ? 'Passed' : review === 'changes' ? 'Changes required'
-      : s.review ? 'Out of date' : 'Not run'
-    status.push({ key: 'review', label: 'Review', labelText: 'Review',
-      value: review === 'changes' ? <Text color={ERROR}>{reviewText}</Text> : reviewText, valueText: reviewText })
+    const reviewLine = (key: string, label: string, info: ReviewInfo | null): Line => {
+      const text = !info ? 'Not run' : !info.current ? 'Out of date'
+        : info.verdict === 'ready' ? 'Passed' : 'Changes required'
+      const failed = !!info?.current && info.verdict === 'changes'
+      return { key, label, labelText: label, value: failed ? <Text color={ERROR}>{text}</Text> : text, valueText: text }
+    }
+    status.push(reviewLine('review', 'Review', s.review), reviewLine('security', 'Security', s.security))
   }
   if (s.pr) {
     const url = s.pr.url

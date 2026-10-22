@@ -1,7 +1,7 @@
 {
   "name": "ai-sdlc",
   "displayName": "AI-native SDLC",
-  "version": "0.7.1",
+  "version": "0.9.0",
   "description": "Hook-enforced approval gates for Claude Code: intent → spec → plan → build → verify → review, with a status bar and one-click approvals.",
   "author": {
     "name": "Yevhenii Dziubenko",

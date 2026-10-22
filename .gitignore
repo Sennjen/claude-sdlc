@@ -2,3 +2,9 @@ __pycache__/
 *.pyc
 .DS_Store
 plugins/ai-sdlc/evals/results/
+.claude/
+# Codex reads the plugin marketplace from .agents/; keep only that file.
+/.agents/*
+!/.agents/plugins/
+/.agents/plugins/*
+!/.agents/plugins/marketplace.json

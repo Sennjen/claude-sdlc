@@ -1,6 +1,6 @@
 ---
 name: intent
-description: SDLC stage 1 (Plan) - capture a new feature, bug fix or change request as docs/sdlc/<feature>/intent.md. Only in repositories where the SDLC is enabled (prompts carry an [SDLC] status line): use when the user brings a new idea, feature request, bug report or ticket and no intent.md exists for it yet, or when the SDLC status says the current stage is intent.
+description: "SDLC stage 1 (Plan) - capture a new feature, bug fix or change request as docs/sdlc/FEATURE/intent.md. Only in repositories where the SDLC is enabled (prompts carry an [SDLC] status line): use when the user brings a new idea, feature request, bug report or ticket and no intent.md exists for it yet, or when the SDLC status says the current stage is intent."
 ---
 
 # Stage 1 - Capture intent

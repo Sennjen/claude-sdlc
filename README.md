@@ -1,17 +1,17 @@
-# AI-native SDLC for Claude Code
+# AI-native SDLC for Claude Code and Codex
 
 [![Release](https://img.shields.io/github/v/release/Sennjen/claude-sdlc)](https://github.com/Sennjen/claude-sdlc/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A Claude Code plugin (`ai-sdlc`) that puts the agent on the rails of the
+A plugin (`ai-sdlc`) for Claude Code and local Codex clients that follows the
 [AI-native SDLC playbook](https://academy.claude.com/courses/ai-native-sdlc-playbook/introduction):
 
 **Intent → Spec → Plan → Build → Verify → Review → Maintain**, with human approval gates
-that are enforced by hooks, not just requested in a prompt. Claude cannot edit code until you
+that are enforced by enabled, trusted lifecycle hooks. The agent cannot edit code until you
 approve the plan, cannot approve for you, and cannot finish a turn that breaks your verify
 commands.
 
-## Quick start
+## Quick start: Claude Code
 
 ```bash
 claude plugin marketplace add Sennjen/claude-sdlc
@@ -21,23 +21,53 @@ claude plugin marketplace add Sennjen/claude-sdlc
 claude plugin install ai-sdlc@ai-sdlc
 ```
 
-Then run `/ai-sdlc:init` in your project. [Install](#install) covers the requirements,
-organization-wide rollout and upgrading from the plugin's earlier name, `sdlc`.
+Then run `/ai-sdlc:init` in your project. [Install](#install-claude-code) covers the
+requirements, organization-wide rollout and upgrading from the plugin's earlier name, `sdlc`.
 
-This is an independent project, not made or endorsed by Anthropic.
+## Quick start: Codex
+
+From this checkout, register the local marketplace:
+
+```bash
+codex plugin marketplace add /absolute/path/to/claude-sdlc
+codex plugin add ai-sdlc@ai-sdlc
+```
+
+In a client with a Plugins directory, you can install **AI-native SDLC** from this local
+marketplace instead. Restart the client, review and trust the plugin hooks (`/hooks` in the
+CLI), then run `$ai-sdlc:init` in your target project. The native manifest selects a Codex
+adapter and shares the workflow skills and Python gatekeeper with Claude Code.
+
+Codex uses `AGENTS.md` and an inline interactive status block in chat
+(`$ai-sdlc:status` or `sdlc status`) on clients with inline visualization support.
+The block has HTML buttons that request actions through the chat. Cards are snapshots
+refreshed in subsequent responses; clients without this support have a text fallback.
+Protected edits and gated deploys
+are denied and must be done by the user outside the agent: Codex hooks do not support
+interactive `ask` decisions. The Claude status bar is available only in Claude Code.
+
+See [Codex installation, behavior, and verification](docs/codex.md) for compatibility limits,
+existing-project migration, and testing. Local hook support is required; a skills-only
+installation does not enforce the gates.
+
+This is an independent project, not made or endorsed by Anthropic or OpenAI.
 
 ## Layers
 
 | Layer | Where | Role |
 |-------|-------|------|
-| Hooks | `plugins/ai-sdlc/hooks/hooks.json`, `scripts/sdlc.py` | Deterministic gates. The agent cannot skip them |
+| Hooks | `hooks/hooks.json` (Claude), `hooks/codex.json` and `scripts/codex.py` (Codex), shared `scripts/sdlc.py` | Deterministic gates when hooks are enabled and trusted |
 | Skills | `plugins/ai-sdlc/skills/*` | Per-stage playbooks and templates, loaded on demand |
-| Agent | `plugins/ai-sdlc/agents/sdlc-reviewer.md` | Independent read-only reviewer for stage 5 |
-| UI | `plugins/ai-sdlc/hooks/ui.tsx` | A band above the prompt and `SDLC` in the footer: state, next action, approvals by button, a typeahead for `sdlc ...` commands. Shows state; enforces nothing |
-| CLAUDE.md section | added by `/ai-sdlc:init` | Short always-on rules for the repository |
+| Agents | `plugins/ai-sdlc/agents/sdlc-reviewer.md`, `plugins/ai-sdlc/agents/sdlc-security-reviewer.md` | Independent read-only code and security reviewers for stage 5 |
+| UI | `hooks/ui.tsx` (Claude), `scripts/codex_ui.py`, `assets/codex-status.html`, and the status skill (Codex) | Claude has a band above the prompt. Supported Codex clients embed a status block with progress and guarded action buttons in chat |
+| Repository instructions | `AGENTS.md` (Codex), `CLAUDE.md` (Claude), added by init | Short always-on rules for the repository |
 | `sdlc.config.json` | repo root | Opt-in switch plus verify commands. Without it the plugin does nothing |
 
 ## Gates
+
+The table below describes Claude Code. Codex applies the same stage, hash, test-lock, and
+verification rules through `apply_patch` and Bash hooks, with the differences documented in
+[the Codex guide](docs/codex.md#behavior-differences).
 
 | Gate | Hook | Rule |
 |------|------|------|
@@ -52,7 +82,7 @@ This is an independent project, not made or endorsed by Anthropic.
 | Plan drift | `PreToolUse` Edit/Write | In build, an edit to a code or test file that `plan.md` does not list under *Files affected* gets a note, once per file and session: add the file to the plan and re-approve, or undo the edit. It does not block |
 | Definition of Done | `Stop` | If code changed in the session, the `verify` commands run; a failure sends the agent back (max 2 retries per state) |
 | Plan mode | `PostToolUse` ExitPlanMode | A plan accepted in plan mode is not the SDLC approval: the agent is told to write it to `plan.md` and ask for `sdlc approve plan` |
-| Review and PR | `SubagentStop`, `PostToolUse` | Records the `sdlc-reviewer` verdict with the code it read, and the URL from `gh pr create`, `glab mr create` or a forge MCP tool, for the SDLC bar. Gates nothing |
+| Review and PR | `SubagentStop`, `PostToolUse` | Records the `sdlc-reviewer` and `sdlc-security-reviewer` verdicts with the code they read, and the URL from `gh pr create`, `glab mr create` or a forge MCP tool, for the SDLC bar. Gates nothing |
 
 ## User commands (type them as a chat message)
 
@@ -64,10 +94,10 @@ sdlc trivial off                end fast-track
 sdlc unlock tests               allow test edits again
 sdlc feature <slug>             switch the active feature
 sdlc done                       close the active feature once its PR exists
-sdlc status                     show the status (no model turn)
+sdlc status                     show status (Codex embeds an interactive block when supported)
 ```
 
-## SDLC bar
+## SDLC bar (Claude Code)
 
 In an interactive session the plugin shows a band above the prompt, for example
 `feat-a  spec.md · waiting for approval  [Approve spec]  ×`. It holds the active feature, its
@@ -80,8 +110,8 @@ moves it on:
 | The stage's artifact is missing | `Write intent`, `Write spec`, `Write plan` (runs the stage skill) |
 | The artifact is a draft or changed | `Approve <stage>` / `Re-approve <stage>`, one click |
 | Build | `Start building` / `Continue building` (runs `/ai-sdlc:build`), with `n/N steps` |
-| Every plan step is done, no current review | `Review` (runs `/ai-sdlc:review`); `Review again` after `CHANGES REQUIRED` |
-| The review of the current code passed | `Create PR` (runs `/ai-sdlc:review pr`) |
+| Every plan step is done, no current reviews | `Review` (runs `/ai-sdlc:review`); `Review again` after `CHANGES REQUIRED` from either reviewer |
+| Both reviews of the current code passed | `Create PR` (runs `/ai-sdlc:review pr`) |
 | The PR exists | `Close feature` (`sdlc done`) |
 | Claude asked to unlock the tests | `Unlock tests` (`sdlc unlock tests`) |
 
@@ -96,18 +126,20 @@ make active). It only fills in the text; the command still runs when you send it
 The build counts the numbered steps under `## Work sequence` in `plan.md` and the
 `- [x] Step N: ...` lines in `progress.md`. A plan without numbered steps counts as done when
 verify passes. A review counts while the code it read is unchanged: the `SubagentStop` hook
-keeps the `sdlc-reviewer` verdict line (`READY FOR HUMAN REVIEW` or `CHANGES REQUIRED`) with a
-hash of the code that differs from the default branch, so a commit on the feature branch keeps
-it and any code edit makes it stale. The PR URL comes from the output of `gh pr create`,
-`glab mr create` or a forge MCP tool that creates a pull or merge request. Both live in
-`.sdlc/features/<feature>.json`. `×` hides the band until the stage, the review or the PR changes.
+keeps the verdict line (`READY FOR HUMAN REVIEW` or `CHANGES REQUIRED`) of `sdlc-reviewer` and
+of `sdlc-security-reviewer`, each with a hash of the code as it differs from a fixed base
+commit: where the feature branch left the default branch, or the current commit when no
+default branch is found. A commit keeps the review, and any code change makes it stale. The PR
+URL comes from the output of `gh pr create`, `glab mr create` or a forge MCP tool that creates
+a pull or merge request. Each verdict and the PR URL live in their own file under
+`.sdlc/features/<feature>/`. `×` hides the band until the stage, a review or the PR changes.
 
 `SDLC` in the footer, or the feature's name in the band, unfolds the details:
 
 - **Artifacts**: `intent.md`, `spec.md`, `plan.md`, `progress.md` and `approvals.json` with
   their state. A name opens the file in the desktop's Files pane (elsewhere, in the default app).
-- **Status**: build steps, the code gate, the last verify result, the review, a link to the PR,
-  fast-track and the test lock.
+- **Status**: build steps, the code gate, the last verify result, the code and security
+  reviews, a link to the PR, fast-track and the test lock.
 - **Actions**: the next action, `Run verify`, `Show changes` (the Diff pane), `Review`,
   `Close feature`, `Unlock tests` and `End fast-track`.
 - **Other features**: one row per open feature with its stage; a row makes that feature active
@@ -127,7 +159,7 @@ rings), a native notification also reports a failed verify, the review verdict, 
 an artifact that waits for approval when Claude's turn ends (once per version of the file). The
 desktop app has no such channel, so there the toasts alone show.
 
-## Plan mode
+## Plan mode (Claude Code)
 
 The playbook drafts the plan in Claude Code plan mode, where Claude reads the code but cannot
 change it. The bar does not switch to plan mode: `Write plan` runs `/ai-sdlc:plan` in the current
@@ -155,7 +187,7 @@ draws nothing, so there is no band.
 
 The agent has a safe CLI on its PATH: `sdlc status | state [--session ID] | features | new <slug> [type] | lock-tests`. `state` prints the status as JSON for UIs.
 
-## Install
+## Install (Claude Code)
 
 Requirements: Claude Code 2.1.293+ (for the UI; the gates work on older versions),
 `python3` (3.9+) and `git`.
@@ -290,6 +322,9 @@ docs/sdlc/<feature>/
 cd plugins/ai-sdlc && python3 -m unittest discover -s tests -v
 ```
 
+The Python suite includes Codex hook fixtures, multi-file patch checks, and shared-core
+regressions. For an interactive Codex smoke check, see [the guide](docs/codex.md#verification).
+
 The UI module has its own tests and type check (Claude Code 2.1.293+, TypeScript 5.4+):
 
 ```bash
@@ -304,9 +339,10 @@ The eval suite in `plugins/ai-sdlc/evals/` checks the agent's behaviour, not the
 request starts with `intent.md`, an approved intent gets a spec that flags conflicting
 constraints, a skipped spec gets a plan before code, a bug fix locks the tests before the fix,
 work outside the approved plan stays out of the change, a typo asks for `sdlc trivial`, a
-question starts nothing, the review runs the `sdlc-reviewer` subagent, and a push to `main`
-waits for the user. Each case runs three times with the plugin and three times without it, so
-`Δ` shows what the plugin adds. It makes real model calls (roughly 54 agent runs), so run it
+question starts nothing, the review runs the `sdlc-reviewer` and `sdlc-security-reviewer`
+subagents, the security reviewer flags a command injection the branch adds, and a push to
+`main` waits for the user. Each case runs three times with the plugin and three times without
+it, so `Δ` shows what the plugin adds. It makes real model calls (roughly 60 agent runs), so run it
 from a terminal where `claude` is logged in:
 
 ```bash

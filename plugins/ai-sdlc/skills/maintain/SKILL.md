@@ -1,6 +1,6 @@
 ---
 name: maintain
-description: SDLC stage 6 (Maintain) - close the loop - turn incidents, alerts, metric breaches and repeated mistakes into new intent.md files, evals/regression tests and CLAUDE.md or skill updates. Only in repositories where the SDLC is enabled (prompts carry an [SDLC] status line): use when investigating a production incident, failing metric, flaky CI trend, postmortem, or when Claude repeats the same mistake.
+description: "SDLC stage 6 (Maintain) - turn incidents, alerts, metric breaches and repeated mistakes into new intent.md files, regression tests and repository instruction or skill updates. Only in repositories where the SDLC is enabled (prompts carry an [SDLC] status line): use when investigating a production incident, failing metric, flaky CI trend, postmortem, or repeated agent mistakes."
 ---
 
 # Stage 6 - Close the loop
@@ -16,9 +16,9 @@ description: SDLC stage 6 (Maintain) - close the loop - turn incidents, alerts, 
 ## Prevent recurrence
 - **Regression test / eval:** every fixed incident gets a test or eval that would have
   caught it, wired into CI.
-- **Institutional knowledge:** if Claude or the team made the same mistake twice, add a
-  one-line rule to `CLAUDE.md` (repo-specific) or to a skill (organisation-wide). Keep
-  CLAUDE.md short: replace stale rules instead of appending forever.
+- **Institutional knowledge:** if the agent or the team made the same mistake twice, add a
+  one-line rule to `AGENTS.md` (Codex), `CLAUDE.md` (Claude Code), or a skill
+  (organisation-wide). Keep repository instructions short: replace stale rules.
 - **Gates:** if a problem slipped through a gate, propose a change to `REVIEW.md`,
   `sdlc.config.json` (verify commands, gated commands) or CI.
 

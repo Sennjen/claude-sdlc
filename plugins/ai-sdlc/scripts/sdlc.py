@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""AI-native SDLC gatekeeper for Claude Code.
+"""AI-native SDLC gatekeeper shared by Claude Code and the Codex adapter.
 
 Hooks (stdin = hook JSON):   sdlc.py hook <prompt|pre-edit|pre-bash|post-edit|post-tool|subagent-stop|stop>
-Agent-safe CLI:              sdlc.py cli <status|state|new|lock-tests|features>
+Agent-safe CLI:              sdlc.py cli <status|state|chat|new|lock-tests|features>
 
 The plugin is inert in any repository that has no sdlc.config.json.
 Stage approvals are recorded only from real user prompts (UserPromptSubmit),
@@ -47,7 +47,10 @@ DEFAULTS = {
     "protected_paths": [CONFIG_NAME, "**/.claude/settings*.json", "**/.claude/hooks/**",
                         "**/.claude/agents/**", "**/.claude/skills/**", "**/.claude/commands/**",
                         "**/.claude/rules/**", "**/.claude/output-styles/**", ".mcp.json",
-                        "**/CLAUDE.md", "**/CLAUDE.local.md", "REVIEW.md"],
+                        "**/CLAUDE.md", "**/CLAUDE.local.md", "REVIEW.md",
+                        "**/AGENTS.md", "**/AGENTS.override.md", "**/.codex/config.toml",
+                        "**/.codex/hooks.json", "**/.codex/hooks/**", "**/.codex/agents/**", "**/.codex/skills/**",
+                        "**/.codex/rules/**", "**/.agents/skills/**", "**/.agents/plugins/**"],
     "test_paths": ["**/test/**", "**/tests/**", "**/__tests__/**", "**/*.test.*",
                    "**/*.spec.*", "**/*_test.*", "**/test_*.py", "**/*Test.*", "**/*Tests.*"],
     "gated_commands": [r"\bgit(?:\s+-[Cc]\s+\S+|\s+--?[\w.-]+(?:=\S+)?)*\s+push\b", r"\bgh\s+pr\s+merge\b", r"\bnpm\s+publish\b",
@@ -98,7 +101,8 @@ def read_json(path, default):
 
 def write_json(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
+    # A temp file per process: hooks run in parallel.
+    tmp = "%s.%d.tmp" % (path, os.getpid())
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
@@ -252,16 +256,17 @@ class Project(object):
     def tests_locked(self):
         return os.path.exists(os.path.join(self.state, "tests-locked"))
 
-    # Local, per feature: the last review verdict and the PR, for the SDLC bar. Only hooks
-    # write them (the agent cannot write .sdlc/); nothing gates on them.
-    def feature_path(self, slug):
-        return os.path.join(self.state, "features", slug + ".json")
+    # Local, per feature: each reviewer's last verdict and the PR, for the SDLC bar. One file per
+    # key, so parallel hooks never rewrite each other's data. Only hooks write them (the agent
+    # cannot write .sdlc/); nothing gates on them.
+    def feature_value(self, slug, key):
+        value = read_json(os.path.join(self.state, "features", slug, key + ".json"), None)
+        if value is None:  # the earlier layout, one file per feature
+            value = read_json(os.path.join(self.state, "features", slug + ".json"), {}).get(key)
+        return value
 
-    def feature_state(self, slug):
-        return read_json(self.feature_path(slug), {})
-
-    def save_feature_state(self, slug, data):
-        write_json(self.feature_path(slug), data)
+    def set_feature_value(self, slug, key, value):
+        write_json(os.path.join(self.state, "features", slug, key + ".json"), value)
 
     def audit(self, event, **kw):
         os.makedirs(self.state, exist_ok=True)
@@ -334,7 +339,7 @@ class Project(object):
                "artifact": None, "stages": {}, "features": [], "tests_locked": self.tests_locked(),
                "fasttrack": self.session(sid).get("fasttrack") if sid else None,
                "verify": {"commands": self.cfg["verify"], "last": self.last_verify(sid) if sid else None},
-               "review": None, "pr": None}
+               "review": None, "security": None, "pr": None}
         if slug:
             approvals = self.approvals(slug)
             for s in STAGES:
@@ -350,14 +355,20 @@ class Project(object):
                         "next_skill": STAGE_SKILL[stage], "done": "done" in approvals})
             if stage in STAGES:
                 out["artifact"] = out["stages"][stage]["path"]
-            local = self.feature_state(slug)
-            review = local.get("review")
-            if review:
+            changes = {}  # one fingerprint per base commit the reviews read
+            for kind, _ in REVIEWERS:
+                review = self.feature_value(slug, kind)
+                if not review:
+                    continue
                 # A review covers the change it read: any later code change makes it stale.
-                current = stage == "build" and review.get("change") == fingerprint(self, base_ref(self))
-                out["review"] = {"verdict": review.get("verdict"), "at": review.get("at"),
-                                 "current": current}
-            out["pr"] = local.get("pr")
+                current = False
+                if stage == "build":
+                    base = review.get("base") or base_ref(self)
+                    if base not in changes:
+                        changes[base] = fingerprint(self, base)
+                    current = review.get("change") == changes[base]
+                out[kind] = {"verdict": review.get("verdict"), "at": review.get("at"), "current": current}
+            out["pr"] = self.feature_value(slug, "pr")
         for f in self.features():
             stage, st = self.current_stage(f)
             out["features"].append({"slug": f, "stage": stage, "stage_state": st,
@@ -899,7 +910,7 @@ def push_branches(cmd, cwd):
     return branches if seen and seen == len(GIT_PUSH.findall(cmd)) else None
 
 
-STATE_REF = re.compile(r"approvals\.json|(^|[\s/'\"=])\.sdlc(/|\b)|sdlc\.py")
+STATE_REF = re.compile(r"approvals\.json|(^|[\s/'\"=])\.sdlc(/|\b)|(?:sdlc|codex)\.py")
 READERS = frozenset(("cat", "head", "tail", "ls", "wc", "grep", "egrep", "fgrep", "jq", "diff", "cmp",
                      "stat", "shasum", "sha256sum", "md5", "md5sum", "cksum", "cut", "tr", "nl", "echo",
                      "printf", "read", "pwd", "cd", "basename", "dirname", "realpath", "readlink", "test",
@@ -1009,9 +1020,9 @@ def reads_only(cmd):
 # -------------------------------------------------------------------- user commands
 
 USER_CMD = re.compile(r"^\s*sdlc\s+([a-z-]+)(?:\s+(.*))?$", re.I)
-USER_ONLY = ("approve", "skip", "trivial", "unlock", "feature", "done")
+USER_ONLY = ("approve", "skip", "trivial", "unlock", "feature", "done", "ui")
 NESTED_USER_CMD = re.compile(r"\bsdlc\s+(?:%s)\b" % "|".join(USER_ONLY), re.I)
-CLAUDE_CLI = [r"\bclaude(?:-code)?\b"]
+AGENT_CLI = [r"\bclaude(?:-code)?\b", r"\bcodex\b"]
 
 
 def handle_user_command(p, sid, line):
@@ -1025,10 +1036,15 @@ def handle_user_command(p, sid, line):
     if verb == "approve":
         stage = args[0].lower() if args else ""
         slug = p.active()
+        bound = len(args) == 5 and args[1] == "--feature" and args[3] == "--sha256"
+        if len(args) > 1 and not bound:
+            return "[SDLC] Approval failed: invalid approval arguments. Refresh the card or type `sdlc approve <stage>`."
         if stage not in STAGES:
             return "[SDLC] Usage: `sdlc approve intent|spec|plan`. Tell the user."
         if not slug:
             return "[SDLC] Approval failed: no active feature. Tell the user."
+        if bound and args[2] != slug:
+            return "[SDLC] Approval failed: the active feature changed. Refresh the card; nothing was approved."
         path = os.path.join(p.fdir(slug), stage + ".md")
         if not os.path.isfile(path):
             return "[SDLC] Approval failed: %s does not exist. Tell the user." % p.rel(path)
@@ -1038,6 +1054,8 @@ def handle_user_command(p, sid, line):
                 return ("[SDLC] Approval failed: %s must be approved first "
                         "(it is %s). Tell the user." % (prev, p.stage_state(slug, prev, approvals)))
         digest = sha256_file(path)
+        if bound and args[4] != digest:
+            return "[SDLC] Approval failed: the document changed. Refresh the card; nothing was approved."
         old = approvals.get(stage)
         invalidated = []
         if old and old.get("sha256") != digest:
@@ -1137,6 +1155,17 @@ def base_ref(p):
         if rc == 0 and out.strip():
             return out.decode().strip()
     return "HEAD"
+
+
+def base_commit(p):
+    """base_ref as a fixed commit id. Without a default branch it is HEAD, which every commit
+    moves, so a fingerprint that must survive commits keeps the commit it was taken against."""
+    base = base_ref(p)
+    if base == "HEAD":
+        rc, out = git(p.root, "rev-parse", "--verify", "-q", "HEAD")
+        if rc == 0 and out.strip():
+            return out.decode().strip()
+    return base
 
 
 def fingerprint(p, base="HEAD"):
@@ -1303,11 +1332,11 @@ def hook_pre_bash(data, p):
         p.audit("gate-deny", tool="Bash", command=cmd[:300], reason="sdlc state")
         pre_decision("deny", "SDLC state (.sdlc/, approvals.json) is managed by hooks: shell commands "
                              "may only read it (cat, grep, jq, sed -n, git log/show) and must not run "
-                             "sdlc.py. Use the `sdlc` CLI (status, new, lock-tests) or ask the user.")
-    if NESTED_USER_CMD.search(cmd) and gated_pattern(cmd, CLAUDE_CLI):
+                             "the hook scripts. Use the `sdlc` CLI (status, new, lock-tests) or ask the user.")
+    if NESTED_USER_CMD.search(cmd) and gated_pattern(cmd, AGENT_CLI):
         p.audit("gate-deny", tool="Bash", command=cmd[:300], reason="nested user command")
         pre_decision("deny", "User-only `sdlc` commands count only when the user types them in this "
-                             "chat; sending one through another Claude session is blocked. Ask the user.")
+                             "chat; sending one through another agent session is blocked. Ask the user.")
     cwd = data.get("cwd") or p.root
     pattern = gated_pattern(cmd, p.cfg["gated_commands"])
     if pattern and re.search(pattern, "git push"):
@@ -1357,7 +1386,9 @@ def hook_post_edit(data, p):
     sys.exit(0)
 
 
-REVIEWER = re.compile(r"(?:^|:)sdlc-reviewer$")
+# Each independent reviewer keeps its own verdict under this key of the feature state.
+REVIEWERS = (("review", re.compile(r"(?:^|:)sdlc-reviewer$")),
+             ("security", re.compile(r"(?:^|:)sdlc-security-reviewer$")))
 VERDICT = re.compile(r"READY FOR HUMAN REVIEW|CHANGES REQUIRED")
 PR_CREATE = re.compile(r"\b(?:gh\s+pr|glab\s+mr)\s+create\b")
 PR_TOOL = re.compile(r"^mcp__.*(?:create|save|open)_?(?:pull|merge)_?request", re.I)
@@ -1365,19 +1396,21 @@ PR_URL = re.compile(r"https?://[^\s\"'<>()\[\]\\]+/(?:pull|merge_requests)/\d+")
 
 
 def record_review(p, data, text):
-    """Keep the sdlc-reviewer's verdict with the change it read, for the SDLC bar."""
+    """Keep a reviewer's verdict with the change it read, for the SDLC bar."""
     slug = p.active()
-    if not slug or not REVIEWER.search(data.get("agent_type") or ""):
+    agent = data.get("agent_type") or ""
+    kind = next((kind for kind, pattern in REVIEWERS if pattern.search(agent)), None)
+    if not slug or not kind:
         return
     lines = [line for line in (text or "").splitlines() if VERDICT.search(line)]
     if not lines:
         return
     # The last verdict line decides; a line that names both reads as changes required.
     verdict = "changes" if "CHANGES REQUIRED" in lines[-1] else "ready"
-    local = p.feature_state(slug)
-    local["review"] = {"verdict": verdict, "at": now(), "change": fingerprint(p, base_ref(p))}
-    p.save_feature_state(slug, local)
-    p.audit("review", feature=slug, verdict=verdict, session=data.get("session_id"))
+    base = base_commit(p)
+    p.set_feature_value(slug, kind, {"verdict": verdict, "at": now(), "base": base,
+                                     "change": fingerprint(p, base)})
+    p.audit("review", feature=slug, kind=kind, verdict=verdict, session=data.get("session_id"))
 
 
 def record_pr(p, data):
@@ -1390,9 +1423,7 @@ def record_pr(p, data):
     m = PR_URL.search(json.dumps(data.get("tool_response"), ensure_ascii=False))
     if not m:
         return
-    local = p.feature_state(slug)
-    local["pr"] = {"url": m.group(0), "at": now()}
-    p.save_feature_state(slug, local)
+    p.set_feature_value(slug, "pr", {"url": m.group(0), "at": now()})
     p.audit("pr", feature=slug, url=m.group(0))
 
 
@@ -1459,7 +1490,10 @@ def hook_stop(data, p):
                                "a human can look. Do not treat this task as done." % MAX_STOP_RETRIES})
     ok, report = run_verify(p)
     if ok:
-        sess.update({"last_pass_fp": fp, "dirty": False, "fail_count": 0})
+        # The change against a fixed base commit, so a commit keeps the pass current.
+        base = base_commit(p)
+        sess.update({"last_pass_fp": fp, "last_pass_base": base, "last_pass_change": fingerprint(p, base),
+                     "dirty": False, "fail_count": 0})
         sess.pop("last_fail_fp", None)
         p.save_session(sid, sess)
         p.audit("verify-pass", session=sid)
@@ -1481,6 +1515,9 @@ TEMPLATE_INTENT = os.path.join(PLUGIN_ROOT, "skills", "intent", "template.md")
 def cli(argv):
     root = find_root(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()) or find_root(os.getcwd())
     verb = argv[0] if argv else "status"
+    if verb == "chat":
+        import codex_ui
+        return codex_ui.chat(Project(root) if root else None, argv[1:])
     if verb == "state":
         sid = argv[argv.index("--session") + 1] if "--session" in argv[:-1] else None
         print(json.dumps(Project(root).state_dict(sid) if root else {"enabled": False},
@@ -1488,7 +1525,7 @@ def cli(argv):
         return 0
     if not root:
         print("SDLC is not enabled here (no %s). Only the user can enable it, by running "
-              "`/ai-sdlc:init`." % CONFIG_NAME)
+              "the `ai-sdlc:init` skill." % CONFIG_NAME)
         return 1
     p = Project(root)
 
@@ -1537,7 +1574,7 @@ def cli(argv):
         print("`sdlc %s` is a user-only command. Ask the user to type `sdlc %s ...` in the chat."
               % (verb, verb))
         return 1
-    print("Usage: sdlc <status|state [--session ID]|features|new <slug> [type]|lock-tests>")
+    print("Usage: sdlc <status|state [--session ID]|chat [--session ID]|features|new <slug> [type]|lock-tests>")
     return 2
 
 

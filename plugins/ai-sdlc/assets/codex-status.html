@@ -1,0 +1,67 @@
+<section id="sdlc-status" lang="@@LANG@@" aria-label="SDLC" data-unavailable="@@UNAVAILABLE@@" data-pending="@@PENDING@@" data-sent="@@SENT@@" data-failed="@@FAILED@@">
+  <style>
+    #sdlc-status { display: grid; gap: 16px; overflow-wrap: anywhere; }
+    #sdlc-status .sdlc-heading { padding-inline-end: 96px; }
+    #sdlc-status .sdlc-heading h2 { margin: 0; }
+    #sdlc-status .sdlc-progress { display: grid; gap: 8px; }
+    #sdlc-status .sdlc-stages { display: flex; flex-wrap: wrap; gap: 8px; }
+    #sdlc-status .sdlc-files { display: flex; flex-wrap: wrap; gap: 16px; }
+    #sdlc-status .sdlc-details { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 0; }
+    #sdlc-status .sdlc-details div { display: flex; gap: 8px; }
+    #sdlc-status .sdlc-details dd { margin: 0; }
+    #sdlc-status [hidden] { display: none; }
+  </style>
+  <header class="sdlc-heading">
+    <div class="text-small">SDLC</div>
+    <h2>@@TITLE@@</h2>
+  </header>
+  @@CONTENT@@
+  <div class="viz-controls" role="group" aria-label="@@ACTIONS_LABEL@@">
+    @@ACTIONS@@
+  </div>
+  <div class="text-small">@@SNAPSHOT@@</div>
+  <div data-feedback role="status" aria-live="polite" hidden></div>
+  <pre data-command hidden><code></code></pre>
+  <script>
+    (() => {
+      const root = document.getElementById('sdlc-status');
+      const buttons = [...root.querySelectorAll('button[data-prompt]')];
+      const feedback = root.querySelector('[data-feedback]');
+      const command = root.querySelector('[data-command]');
+      let pending = false;
+
+      for (const button of buttons) {
+        button.addEventListener('click', async () => {
+          if (pending) return;
+          feedback.hidden = false;
+          command.hidden = true;
+          if (typeof window.openai?.sendFollowUpMessage !== 'function') {
+            feedback.textContent = root.dataset.unavailable;
+            command.querySelector('code').textContent = button.dataset.prompt;
+            command.hidden = false;
+            return;
+          }
+          pending = true;
+          buttons.forEach(control => { control.disabled = true; });
+          root.setAttribute('aria-busy', 'true');
+          feedback.textContent = root.dataset.pending;
+          try {
+            await window.openai.sendFollowUpMessage({
+              prompt: button.dataset.prompt,
+              title: button.textContent.trim().slice(0, 250)
+            });
+            feedback.textContent = root.dataset.sent;
+          } catch {
+            feedback.textContent = root.dataset.failed;
+            command.querySelector('code').textContent = button.dataset.prompt;
+            command.hidden = false;
+          } finally {
+            pending = false;
+            buttons.forEach(control => { control.disabled = false; });
+            root.removeAttribute('aria-busy');
+          }
+        });
+      }
+    })();
+  </script>
+</section>

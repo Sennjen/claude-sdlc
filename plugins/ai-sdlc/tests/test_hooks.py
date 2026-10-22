@@ -1,6 +1,8 @@
 """End-to-end tests for scripts/sdlc.py hooks. Run: python3 -m unittest discover tests"""
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -635,7 +637,8 @@ class HookTest(unittest.TestCase):
         # hooks/ui.tsx reads these keys; types/index.d.ts declares them (SdlcState, StageInfo)
         self.assertEqual(set(state), {"enabled", "root", "active", "stage", "stage_state", "stage_label",
                                       "next_skill", "code_gate", "artifact", "stages", "features",
-                                      "tests_locked", "fasttrack", "verify", "review", "pr", "done"})
+                                      "tests_locked", "fasttrack", "verify", "review", "security", "pr",
+                                      "done"})
         self.assertEqual(set(state["stages"]["intent"]), {"state", "path", "sha256", "approved_sha256",
                                                           "by", "at", "reason"})
         self.assertEqual(state["artifact"], "docs/sdlc/feat-a/intent.md")
@@ -650,9 +653,9 @@ class HookTest(unittest.TestCase):
         os.remove(self.path("sdlc.config.json"))
         self.assertEqual(json.loads(self.cli("state")[1]), {"enabled": False})
 
-    def review(self, text, agent="ai-sdlc:sdlc-reviewer"):
+    def review(self, text, agent="ai-sdlc:sdlc-reviewer", kind="review"):
         self.hook("subagent-stop", agent_type=agent, last_assistant_message=text)
-        return json.loads(self.cli("state", "--session", SID)[1])["review"]
+        return json.loads(self.cli("state", "--session", SID)[1])[kind]
 
     def test_review_verdict_follows_the_change(self):
         sh(self.root, "git", "checkout", "-qb", "feat/a")
@@ -675,11 +678,101 @@ class HookTest(unittest.TestCase):
         self.write("src/app.js", "console.log(3)\n")
         self.assertFalse(json.loads(self.cli("state")[1])["review"]["current"])
 
+    def test_security_verdict_is_kept_apart(self):
+        sh(self.root, "git", "checkout", "-qb", "feat/a")
+        self.to_build()
+        self.write("src/app.js", "console.log(2)\n")
+        security = "ai-sdlc:sdlc-security-reviewer"
+        found = self.review("[Blocker] src/app.js:1 - x\nCHANGES REQUIRED", agent=security, kind="security")
+        self.assertEqual((found["verdict"], found["current"]), ("changes", True))
+        self.assertIsNone(json.loads(self.cli("state")[1])["review"])
+        # Each reviewer's verdict leaves the other one as it was.
+        self.assertEqual(self.review("READY FOR HUMAN REVIEW")["verdict"], "ready")
+        self.assertEqual(json.loads(self.cli("state")[1])["security"]["verdict"], "changes")
+        self.assertEqual(self.review("READY FOR HUMAN REVIEW", agent=security, kind="security")["verdict"],
+                         "ready")
+        self.assertEqual(json.loads(self.cli("state")[1])["review"]["verdict"], "ready")
+        # Any code change makes both stale.
+        self.write("src/app.js", "console.log(3)\n")
+        state = json.loads(self.cli("state")[1])
+        self.assertEqual((state["review"]["current"], state["security"]["current"]), (False, False))
+
+    def test_parallel_reviewers_keep_both_verdicts(self):
+        # The two reviewers can finish together, and each SubagentStop hook is its own process.
+        # Windows has no fcntl: the hooks must not depend on it.
+        self.to_build()
+        self.write("src/app.js", "console.log(2)\n")
+        env = dict(os.environ, CLAUDE_PROJECT_DIR=self.root)
+        without_fcntl = ("import runpy, sys; sys.modules['fcntl'] = None; sys.argv = sys.argv[1:]; "
+                         "runpy.run_path(sys.argv[0], run_name='__main__')")
+        for command in ([sys.executable, SCRIPT], [sys.executable, "-c", without_fcntl, SCRIPT]):
+            for attempt in range(5):
+                shutil.rmtree(self.path(".sdlc/features"), ignore_errors=True)
+                runs = []
+                for agent in ("ai-sdlc:sdlc-reviewer", "ai-sdlc:sdlc-security-reviewer"):
+                    runs.append(subprocess.Popen(command + ["hook", "subagent-stop"], stdin=subprocess.PIPE,
+                                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                                 cwd=self.root, env=env))
+                    runs[-1].stdin.write(json.dumps({"session_id": SID, "cwd": self.root, "agent_type": agent,
+                                                     "last_assistant_message": "READY FOR HUMAN REVIEW"}))
+                for run in runs:
+                    run.stdin.close()
+                for run in runs:
+                    err = run.stderr.read()
+                    run.wait()
+                    self.assertEqual(run.returncode, 0, err)
+                    self.assertNotIn("hook error", err)
+                state = json.loads(self.cli("state")[1])
+                self.assertEqual(((state["review"] or {}).get("verdict"),
+                                  (state["security"] or {}).get("verdict")),
+                                 ("ready", "ready"), "%s, attempt %d" % (command[1], attempt))
+
+    def test_review_follows_committed_changes_without_a_known_default_branch(self):
+        # No origin/HEAD, main or master: the base falls back to HEAD, which every commit moves.
+        sh(self.root, "git", "branch", "-m", "trunk")
+        self.to_build()
+        self.write("src/app.js", "console.log(2)\n")
+        sh(self.root, "git", "add", "-A")
+        sh(self.root, "git", "commit", "-qm", "work")
+        self.assertTrue(self.review("READY FOR HUMAN REVIEW")["current"])
+        # A commit that keeps the code keeps the review; a committed code change makes it stale.
+        self.write("docs/notes.md", "notes\n")
+        sh(self.root, "git", "add", "-A")
+        sh(self.root, "git", "commit", "-qm", "notes")
+        self.assertTrue(json.loads(self.cli("state")[1])["review"]["current"])
+        self.write("src/app.js", "console.log(3)\n")
+        sh(self.root, "git", "add", "-A")
+        sh(self.root, "git", "commit", "-qm", "more work")
+        self.assertFalse(json.loads(self.cli("state")[1])["review"]["current"])
+
+    def test_state_from_the_single_file_layout_is_still_read(self):
+        self.to_build()
+        self.write(".sdlc/features/feat-a.json", json.dumps({
+            "review": {"verdict": "changes", "at": "2026-10-01T10:00:00+00:00", "change": "x"},
+            "pr": {"url": "https://github.com/o/r/pull/7", "at": "2026-10-01T11:00:00+00:00"}}))
+        state = json.loads(self.cli("state")[1])
+        self.assertEqual((state["review"]["verdict"], state["pr"]["url"]),
+                         ("changes", "https://github.com/o/r/pull/7"))
+        self.assertIsNone(state["security"])
+        # A new verdict wins over the old file's.
+        self.assertEqual(self.review("READY FOR HUMAN REVIEW")["verdict"], "ready")
+        self.assertEqual(json.loads(self.cli("state")[1])["pr"]["url"], "https://github.com/o/r/pull/7")
+
+    def test_subagent_stop_matcher_covers_both_reviewers(self):
+        with open(os.path.join(os.path.dirname(HERE), "hooks", "hooks.json"), encoding="utf-8") as f:
+            matcher = json.load(f)["hooks"]["SubagentStop"][0]["matcher"]
+        for agent in ("ai-sdlc:sdlc-reviewer", "ai-sdlc:sdlc-security-reviewer"):
+            self.assertTrue(re.search(matcher, agent), agent)
+        self.assertIsNone(re.search(matcher, "Explore"))
+
     def test_review_from_subagent_handback(self):
         self.to_build()
         self.hook("post-tool", tool_name="SubagentHandback", agent_type="ai-sdlc:sdlc-reviewer",
                   tool_input={"message": "READY FOR HUMAN REVIEW"}, tool_response={})
         self.assertEqual(json.loads(self.cli("state")[1])["review"]["verdict"], "ready")
+        self.hook("post-tool", tool_name="SubagentHandback", agent_type="ai-sdlc:sdlc-security-reviewer",
+                  tool_input={"message": "CHANGES REQUIRED"}, tool_response={})
+        self.assertEqual(json.loads(self.cli("state")[1])["security"]["verdict"], "changes")
 
     def test_pr_recorded_from_create_only(self):
         self.to_build()

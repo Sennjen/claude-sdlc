@@ -1,11 +1,12 @@
 ---
 name: build
-description: SDLC stage 3b (Build) - implement an approved plan.md step by step with small verified increments. Use when the SDLC status says the code gate is open (intent, spec and plan approved) and implementation starts or continues.
+description: "SDLC stage 3b (Build) - implement an approved plan.md step by step with small verified increments. Use when the SDLC status says the code gate is open (intent, spec and plan approved) and implementation starts or continues."
 ---
 
 # Stage 3b - Build against the approved plan
 
-1. **Load context.** Read `plan.md`, `spec.md`, `progress.md` (if any) and `CLAUDE.md`.
+1. **Load context.** Read `plan.md`, `spec.md`, `progress.md` (if any), and repository
+   instructions (`AGENTS.md` in Codex, `CLAUDE.md` in Claude Code).
    Create a branch if you are on the default branch (`feat/<slug>` or `fix/<slug>`).
 2. **Follow the work sequence.** One step at a time:
    - write or update the test for the step first where practical;
@@ -21,6 +22,7 @@ description: SDLC stage 3b (Build) - implement an approved plan.md step by step 
 4. **Parallelise safely.** Independent steps marked *(parallel)* can go to subagents or
    separate worktree sessions. Give each one the plan step, the files it owns and the
    verification command, and review their diffs before integrating.
-5. **Never bypass the gates.** Do not edit code via shell redirects, `sed -i`, patches or
-   generated scripts. Do not touch `docs/sdlc/*/approvals.json` or `.sdlc/`.
+5. **Never bypass the gates.** Use `apply_patch` in Codex or Edit/Write in Claude Code.
+   Do not bypass a denial via shell redirects, `sed -i`, shell-applied patches or generated
+   scripts. Do not touch `docs/sdlc/*/approvals.json` or `.sdlc/`.
 6. When all steps are done, continue with the **ai-sdlc:verify** skill, then **ai-sdlc:review**.

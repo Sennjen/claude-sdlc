@@ -31,6 +31,7 @@ const DRAFT: On1 = {
   fasttrack: null,
   verify: { commands: ['npm test'], last: null },
   review: null,
+  security: null,
   pr: null,
 }
 const BUILD: On1 = {
@@ -250,11 +251,14 @@ test('notifications: a failed verify, the review verdict and the PR', async ($, 
   await fake.clock.advance(10_000)
   fake.state = { ...fake.state, review: { verdict: 'changes', at: '2026-10-06T10:05:00+02:00', current: true } }
   await fake.clock.advance(10_000)
+  fake.state = { ...fake.state, security: { verdict: 'changes', at: '2026-10-06T10:06:00+02:00', current: true } }
+  await fake.clock.advance(10_000)
   fake.state = { ...fake.state, pr: { url: 'https://github.com/o/r/pull/12', at: null } }
   await fake.clock.advance(10_000)
   expect(fake.notes).toEqual([
     'Verify failed: the Definition of Done is not met',
     'Review: changes required',
+    'Security review: changes required',
     'PR created: https://github.com/o/r/pull/12',
   ])
   // Each still shows as a toast too: the desktop has no notification channel.
@@ -397,10 +401,24 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await band.find({ text: /^changes required$/ })).toBeDefined()
     expect(fake.toasts).toContain('SDLC review: changes required')
 
-    // A passed review of the code as it is now: Create PR runs the review skill's PR step.
+    // The code review passed, but the security review has not run: no Create PR yet.
     fake.state = { ...fake.state, review: { verdict: 'ready', at: '2026-10-06T11:00:00+02:00', current: true } }
     await fake.clock.advance(10_000)
+    expect(await keys()).toEqual(['feature', 'review', 'hide'])
+    expect((await band.find({ key: 'review' }))?.props.label).toBe('Review')
+    expect(fake.toasts).toContain('SDLC review passed')
+
+    // The security reviewer asked for changes: review again.
+    fake.state = { ...fake.state, security: { verdict: 'changes', at: '2026-10-06T11:01:00+02:00', current: true } }
+    await fake.clock.advance(10_000)
+    expect((await band.find({ key: 'review' }))?.props.label).toBe('Review again')
+    expect(fake.toasts).toContain('SDLC security review: changes required')
+
+    // Both reviews of the code as it is now passed: Create PR runs the review skill's PR step.
+    fake.state = { ...fake.state, security: { verdict: 'ready', at: '2026-10-06T11:02:00+02:00', current: true } }
+    await fake.clock.advance(10_000)
     expect(await keys()).toEqual(['feature', 'pr', 'hide'])
+    expect(fake.toasts).toContain('SDLC security review passed: the PR is next')
     expect(await band.find({ text: /Build · review passed/ })).toBeDefined()
     await band.press({ key: 'pr' })
     expect(fake.ran).toEqual(['ai-sdlc:review', 'ai-sdlc:review pr'])
@@ -420,6 +438,16 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await actionKeys()).toEqual(['review', 'changes', 'done'])
     expect(await band.find({ text: /^Out of date$/ })).toBeDefined()
     expect(fake.ran).toEqual([])
+  })
+
+  test(`${surface}: the details show the code and security reviews apart`, async ($, on) => {
+    fakeSdlc(on, { ...VERIFIED, review: { verdict: 'ready', at: '2026-10-06T11:00:00+02:00', current: true },
+      security: { verdict: 'changes', at: '2026-10-06T11:01:00+02:00', current: true } })
+    const { band, actionKeys } = await details($, surface)
+    expect(await actionKeys()).toEqual(['review', 'changes', 'done'])
+    expect(await band.find({ text: /^Security$/ })).toBeDefined()
+    expect(await band.find({ text: /^Passed$/ })).toBeDefined()
+    expect(await band.find({ text: /^Changes required$/ })).toBeDefined()
   })
 
   test(`${surface}: the details link the PR`, async ($, on) => {
