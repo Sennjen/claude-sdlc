@@ -214,6 +214,10 @@ not cached, run `/plugin install ai-sdlc@ai-sdlc` once. The skills move from `/s
 Then, inside a project, run `/ai-sdlc:init`. It detects the verify commands, adds the
 CLAUDE.md section and `REVIEW.md`, and writes `sdlc.config.json` last. Commit the result.
 
+After a plugin update, run `/ai-sdlc:init update` in each project. It compares the project's
+`REVIEW.md` and `sdlc.config.json` with the new templates (`sdlc template-diff`) and proposes
+what is missing, keeping the project's own rules. It writes nothing you have not accepted.
+
 To try the plugin without installing it, clone the repository and run
 `claude --plugin-dir ./claude-sdlc/plugins/ai-sdlc`.
 

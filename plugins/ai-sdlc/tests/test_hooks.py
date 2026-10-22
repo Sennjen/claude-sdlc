@@ -758,6 +758,32 @@ class HookTest(unittest.TestCase):
         self.assertEqual(self.review("READY FOR HUMAN REVIEW")["verdict"], "ready")
         self.assertEqual(json.loads(self.cli("state")[1])["pr"]["url"], "https://github.com/o/r/pull/7")
 
+    def test_template_diff_lists_what_the_templates_added(self):
+        # An older init wrote these lists; a list in the config replaces the plugin's default.
+        self.write("sdlc.config.json", json.dumps({"verify": ["test ! -f FAIL"],
+                                                   "protected_paths": ["sdlc.config.json", "REVIEW.md"],
+                                                   "gated_commands": [r"\bnpm\s+publish\b"]}))
+        self.write("REVIEW.md", "# Review policy\n\n## Passes (every PR)\n\n| Pass | Checks |\n"
+                                "|------|--------|\n| Security | AuthN/AuthZ |\n\n## Severity\n\n- Blocker\n")
+        rc, out = self.cli("template-diff")
+        self.assertEqual(rc, 0, out)
+        self.assertIn('protected_paths lacks ["**/.claude/settings*.json"', out)
+        self.assertIn('"**/AGENTS.md"', out)
+        self.assertIn("gated_commands lacks", out)
+        self.assertNotIn("npm\\\\s+publish", out)
+        # verify is the repository's own, and an absent list falls back to the defaults.
+        self.assertNotIn("verify", out)
+        self.assertNotIn("test_paths", out)
+        self.assertIn('REVIEW.md: no section named ["Always check", "Security"', out)
+        self.assertIn("Security is a row of the passes table", out)
+        # A repository written from the current templates has nothing to add.
+        templates = os.path.join(os.path.dirname(HERE), "skills", "init")
+        shutil.copy(os.path.join(templates, "config-template.json"), self.path("sdlc.config.json"))
+        shutil.copy(os.path.join(templates, "review-template.md"), self.path("REVIEW.md"))
+        rc, out = self.cli("template-diff")
+        self.assertEqual((rc, out.strip()), (0, "sdlc.config.json and REVIEW.md have everything the init "
+                                                "templates have."))
+
     def test_subagent_stop_matcher_covers_both_reviewers(self):
         with open(os.path.join(os.path.dirname(HERE), "hooks", "hooks.json"), encoding="utf-8") as f:
             matcher = json.load(f)["hooks"]["SubagentStop"][0]["matcher"]

@@ -1,6 +1,6 @@
 ---
 name: init
-description: "Enable the AI-native SDLC in the current repository - creates sdlc.config.json, repository instructions, REVIEW.md and docs/sdlc/. Use when the user asks to set up, enable or install the SDLC workflow in a project."
+description: "Enable the AI-native SDLC in the current repository - creates sdlc.config.json, repository instructions, REVIEW.md and docs/sdlc/. With `update`, proposes what the current templates add to an enabled repository's REVIEW.md and sdlc.config.json. Use when the user asks to set up, enable, install or update the SDLC workflow in a project."
 disable-model-invocation: true
 ---
 
@@ -8,6 +8,10 @@ disable-model-invocation: true
 
 The plugin's hooks stay inert until `sdlc.config.json` exists at the repo root, so write
 that file **last** (after it exists, repository instructions and REVIEW.md become protected paths).
+
+Invoked with `update`: if `sdlc.config.json` exists, follow
+[Update an enabled repository](#update-an-enabled-repository) instead of the steps below. If
+it does not, there is nothing to update yet: say so and offer the full init.
 
 In Codex, first confirm the plugin's lifecycle hooks are enabled and trusted. If they
 are skipped or unavailable, report that the workflow has no automatic enforcement.
@@ -47,3 +51,26 @@ are skipped or unavailable, report that the workflow has no automatic enforcemen
      deploy commands must be performed by the user outside the agent because Codex
      hooks cannot show an interactive approval request;
    - that they should commit the new files.
+
+## Update an enabled repository
+
+A plugin update changes the templates, not the files init wrote from them. Bring those files
+up to date without losing what the repository made its own:
+
+1. **Find the gaps.** Run `sdlc template-diff`. It lists the template entries that
+   `sdlc.config.json` lacks and the template sections that `REVIEW.md` lacks, and changes
+   nothing. If it finds no gaps, report that and stop.
+2. **sdlc.config.json.** A list in the repository's config replaces the plugin's default
+   list, so a new template entry has no effect until the list has it. Add each reported entry
+   to the end of its list if it applies to this repository. Init removes gated commands and
+   test paths that do not apply: leave out what was removed on purpose. Keep every existing
+   entry and value, `verify` included.
+3. **REVIEW.md.** Add each missing section from [review-template.md](review-template.md),
+   adapted to the stack. Move a Security row out of the passes table into the *Security*
+   section. A section that exists under another name stays as it is. Keep the repository's
+   own passes, rules, paths and severity definitions word for word; if one contradicts the
+   template, keep it and tell the user.
+4. **Ask before writing.** Show the user each file's proposed change as a diff, and write only
+   what they accept. Both files are protected paths: Claude Code asks to confirm the edit, and
+   Codex denies it, so in Codex give the user the exact text to apply instead.
+5. **Report** what changed and what stayed as it was, and remind the user to commit.

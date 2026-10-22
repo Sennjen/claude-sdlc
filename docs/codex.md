@@ -26,6 +26,9 @@ In the target project, invoke `$ai-sdlc:init` (or select the plugin's **init** s
 skill picker). Init writes repository instructions to `AGENTS.md`, adds `REVIEW.md`, detects
 verification commands, and writes `sdlc.config.json` last. It preserves existing instructions.
 Commit the generated project files. The plugin stays inert without `sdlc.config.json`.
+After a plugin update, `$ai-sdlc:init update` proposes what the new templates add to the
+project's `REVIEW.md` and `sdlc.config.json`. Codex denies edits to these protected files, so
+you apply the proposed text yourself.
 
 Type approvals as ordinary chat messages, for example:
 

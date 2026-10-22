@@ -2,7 +2,7 @@
 """AI-native SDLC gatekeeper shared by Claude Code and the Codex adapter.
 
 Hooks (stdin = hook JSON):   sdlc.py hook <prompt|pre-edit|pre-bash|post-edit|post-tool|subagent-stop|stop>
-Agent-safe CLI:              sdlc.py cli <status|state|chat|new|lock-tests|features>
+Agent-safe CLI:              sdlc.py cli <status|state|chat|new|lock-tests|features|template-diff>
 
 The plugin is inert in any repository that has no sdlc.config.json.
 Stage approvals are recorded only from real user prompts (UserPromptSubmit),
@@ -1510,6 +1510,40 @@ def hook_stop(data, p):
 # --------------------------------------------------------------------------- CLI
 
 TEMPLATE_INTENT = os.path.join(PLUGIN_ROOT, "skills", "intent", "template.md")
+TEMPLATE_CONFIG = os.path.join(PLUGIN_ROOT, "skills", "init", "config-template.json")
+TEMPLATE_REVIEW = os.path.join(PLUGIN_ROOT, "skills", "init", "review-template.md")
+# The lists init copies from the template and adapts; `verify` is the repository's own.
+TEMPLATE_LISTS = ("protected_paths", "ungated_paths", "test_paths", "gated_commands", "protected_branches")
+
+
+def template_diff(p):
+    """What the repository's sdlc.config.json and REVIEW.md lack next to the current init
+    templates, one line per gap, for `/ai-sdlc:init update`. Read-only."""
+    lines = []
+    template = read_json(TEMPLATE_CONFIG, {})
+    config = read_json(os.path.join(p.root, CONFIG_NAME), {})
+    for key in TEMPLATE_LISTS:
+        # A list in the config replaces the plugin's default; without one the default applies.
+        if not isinstance(config.get(key), list):
+            continue
+        missing = [entry for entry in template.get(key, []) if entry not in config[key]]
+        if missing:
+            lines.append("%s: %s lacks %s" % (CONFIG_NAME, key, json.dumps(missing)))
+    path = os.path.join(p.root, "REVIEW.md")
+    if not os.path.isfile(path):
+        return lines + ["REVIEW.md: missing"]
+    with open(path, encoding="utf-8") as f:
+        review = f.read()
+    with open(TEMPLATE_REVIEW, encoding="utf-8") as f:
+        sections = re.findall(r"^##\s+(.+?)\s*$", f.read(), re.M)
+    have = {heading.lower() for heading in re.findall(r"^#{2,}\s+(.+?)\s*$", review, re.M)}
+    missing = [section for section in sections if section.lower() not in have]
+    if missing:
+        lines.append("REVIEW.md: no section named %s" % json.dumps(missing))
+    if "security" not in have and re.search(r"^\|\s*Security\s*\|", review, re.M | re.I):
+        lines.append("REVIEW.md: Security is a row of the passes table; the security reviewer "
+                     "reads a `## Security` section")
+    return lines
 
 
 def cli(argv):
@@ -1531,6 +1565,11 @@ def cli(argv):
 
     if verb == "status":
         print(p.status(verbose=True))
+        return 0
+    if verb == "template-diff":
+        gaps = template_diff(p)
+        print("\n".join(gaps) if gaps else
+              "%s and REVIEW.md have everything the init templates have." % CONFIG_NAME)
         return 0
     if verb == "features":
         active = p.active()
@@ -1574,7 +1613,8 @@ def cli(argv):
         print("`sdlc %s` is a user-only command. Ask the user to type `sdlc %s ...` in the chat."
               % (verb, verb))
         return 1
-    print("Usage: sdlc <status|state [--session ID]|chat [--session ID]|features|new <slug> [type]|lock-tests>")
+    print("Usage: sdlc <status|state [--session ID]|chat [--session ID]|features|new <slug> [type]|lock-tests"
+          "|template-diff>")
     return 2
 
 

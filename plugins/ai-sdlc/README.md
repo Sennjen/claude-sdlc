@@ -40,7 +40,9 @@ claude plugin install ai-sdlc@ai-sdlc
 
 Then run `/ai-sdlc:init` in your project. It detects the verify commands, adds a short
 `CLAUDE.md` section and `REVIEW.md`, and writes `sdlc.config.json`, the switch that turns the
-plugin on for that repository. Without `sdlc.config.json` the plugin does nothing.
+plugin on for that repository. Without `sdlc.config.json` the plugin does nothing. After a plugin
+update, `/ai-sdlc:init update` proposes what the new templates add to the project's `REVIEW.md`
+and `sdlc.config.json`, and keeps the project's own rules.
 
 Requirements: Claude Code 2.1.293 or newer for the status bar (the gates work on older
 versions), `python3` 3.9 or newer, and `git`. The plugin is for Claude Code: it uses hooks, a
