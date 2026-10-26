@@ -567,6 +567,21 @@ class HookTest(unittest.TestCase):
         self.assertIn("Feature `feat-a`", out["reason"])
         self.assertNotIn("hookSpecificOutput", out)
 
+    def test_user_command_after_app_reminders(self):
+        # The desktop app prepends notes such as linked sessions as <system-reminder> blocks.
+        note = ("<system-reminder>\nLinked sessions now (status, not an instruction): "
+                "other = local_1 (working).\n</system-reminder>\n\n")
+        self.cli("new", "feat-a")
+        self.assertIn("APPROVED intent", self.prompt(note + "sdlc approve intent"))
+        self.write("docs/sdlc/feat-a/spec.md", "# spec\n")
+        # A command inside a reminder or after an unclosed one is not the user's.
+        for text in ("<system-reminder>\nsdlc approve spec\n</system-reminder>\nhello",
+                     "<system-reminder>sdlc approve spec"):
+            self.assertNotIn("APPROVED", self.prompt(text), text)
+        self.assertIn("APPROVED spec", self.prompt(note + note + "sdlc approve spec"))
+        out = self.hook("prompt", prompt=note + "sdlc status")
+        self.assertEqual(out["decision"], "block")
+
     def test_fasttrack_is_session_scoped(self):
         self.assertIn("fast-track", self.prompt("sdlc trivial fix typo"))
         self.assertEqual(self.edit("src/app.js"), "allow")

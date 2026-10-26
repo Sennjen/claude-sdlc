@@ -1025,6 +1025,8 @@ def reads_only(cmd):
 USER_CMD = re.compile(r"^\s*sdlc\s+([a-z-]+)(?:\s+(.*))?$", re.I)
 USER_ONLY = ("approve", "skip", "trivial", "unlock", "feature", "done", "ui")
 NESTED_USER_CMD = re.compile(r"\bsdlc\s+(?:%s)\b" % "|".join(USER_ONLY), re.I)
+# The desktop app prepends notes (e.g. linked sessions) to the user's prompt as these blocks.
+APP_NOTES = re.compile(r"^(?:\s*<system-reminder>.*?</system-reminder>)+", re.S)
 AGENT_CLI = [r"\bclaude(?:-code)?\b", r"\bcodex\b"]
 
 
@@ -1225,7 +1227,7 @@ def hook_prompt(data, p):
         sess["baseline_fp"] = fingerprint(p)
         p.save_session(sid, sess)
     parts = []
-    first_line = (data.get("prompt") or "").strip().splitlines()[:1]
+    first_line = APP_NOTES.sub("", data.get("prompt") or "", count=1).strip().splitlines()[:1]
     command = USER_CMD.match(first_line[0]) if first_line else None
     if command and command.group(1).lower() == "status":
         # Nothing for the model to do: show the status without a turn. As the first message
