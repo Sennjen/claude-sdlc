@@ -151,11 +151,12 @@ def post_tool(data, p):
         sdlc.hook_post_tool(data, p)
 
 
-# Codex does not load Claude's agents/ profiles. The review skill gives each reviewer's
-# procedure to a fresh read-only subagent with one of these feature markers, regardless of
+# Codex does not load Claude's agents/ profiles. The review, spec and plan skills give each
+# reviewer's procedure to a fresh read-only subagent with one of these feature markers, regardless of
 # its profile name.
 REVIEW_MARKERS = (("SDLC REVIEW: ", "sdlc-reviewer"),
-                  ("SDLC SECURITY REVIEW: ", "sdlc-security-reviewer"))
+                  ("SDLC SECURITY REVIEW: ", "sdlc-security-reviewer"),
+                  ("SDLC DESIGN REVIEW: ", "sdlc-design-reviewer"))
 
 
 def subagent_stop(data, p):

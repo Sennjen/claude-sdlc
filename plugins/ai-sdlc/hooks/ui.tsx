@@ -149,6 +149,12 @@ function announce($: EngineInterface, prev: SdlcState | null, next: SdlcState) {
   if (prev.active !== next.active) return
   announceReview($, 'review', prev.review, next.review, next)
   announceReview($, 'security review', prev.security, next.security, next)
+  // The design review runs inside Claude's turn, whose end announces the draft: a toast is enough.
+  if (next.design && next.design.at !== prev.design?.at && next.stage) {
+    $.ui.toast(next.design.verdict === 'changes'
+      ? `SDLC design review of ${next.stage}.md: changes required`
+      : `SDLC ${next.stage}.md passed the design review`, { timeoutMs: 8000 })
+  }
   if (next.pr && next.pr.url !== prev.pr?.url) {
     $.ui.toast(`PR created: ${next.pr.url}`, { timeoutMs: 8000 })
     notify($, `PR created: ${next.pr.url}`)
@@ -192,7 +198,7 @@ async function refresh($: EngineInterface): Promise<SdlcState | null> {
       announce($, prev, next)
       // A band hidden with its × comes back when there is something new to do.
       const where = (s: SdlcState | null) =>
-        s && s.enabled ? `${s.active}/${s.stage}/${s.stage_state}/${reviewState(s)}/${!!s.pr}` : ''
+        s && s.enabled ? `${s.active}/${s.stage}/${s.stage_state}/${designState(s)}/${reviewState(s)}/${!!s.pr}` : ''
       if (prev && where(prev) !== where(next)) await update($, hiddenAtom, () => false)
       // A request ends once the tests are unlocked, by the button or a typed command.
       if (!next.enabled || !next.tests_locked) await update($, unlockAtom, () => null)
@@ -351,6 +357,22 @@ function reviewState(s: On): 'ready' | 'changes' | 'none' {
   return reviews.every(r => r?.current && r.verdict === 'ready') ? 'ready' : 'none'
 }
 
+/** The design review of the spec or plan that waits for approval: its verdict, or `none`
+ *  when it never ran or the file changed since. */
+function designState(s: On): 'ready' | 'changes' | 'none' {
+  return s.design?.current ? s.design.verdict : 'none'
+}
+
+/** Approve (or re-approve) the stage's artifact as it is on screen now. */
+function approveAction($: EngineInterface, stage: Stage, info: StageInfo & { sha256: string }): Action {
+  const shown = { stage, path: info.path, sha256: info.sha256 }
+  return {
+    key: 'approve',
+    label: `${info.state === 'stale' ? 'Re-approve' : 'Approve'} ${stage}`,
+    run: () => approve($, shown),
+  }
+}
+
 /** Whether every plan step is done; a plan without numbered steps counts as done when
  *  verify passes. */
 const isBuilt = (s: On, steps: Steps) => (steps.total === 0 ? !!s.verify.last?.ok : steps.done >= steps.total)
@@ -387,14 +409,21 @@ function nextAction($: EngineInterface, s: On, steps: Steps = NO_STEPS): Action 
     return { key: 'write', label: `Write ${stage}`, run: () => runCommand($, `/ai-sdlc:${stage}`) }
   }
   if ((info.state === 'draft' || info.state === 'stale') && info.sha256) {
-    const sha256 = info.sha256
-    return {
-      key: 'approve',
-      label: `${info.state === 'stale' ? 'Re-approve' : 'Approve'} ${stage}`,
-      run: () => approve($, { stage, path: info.path, sha256 }),
+    // An unreviewed spec or plan goes to the design reviewer first; the person can still
+    // approve it (pendingApproval), since the review is advice, not a gate.
+    if (stage !== 'intent' && s.design_review !== 'off' && designState(s) === 'none') {
+      return { key: 'design-review', label: `Review ${stage}`, run: () => runCommand($, `/ai-sdlc:${stage}`, 'review') }
     }
+    return approveAction($, stage, { ...info, sha256: info.sha256 })
   }
   return null
+}
+
+/** Approve beside the design review that the band offers first. */
+function pendingApproval($: EngineInterface, s: On, action: Action | null): Action | null {
+  const info = s.stage && s.stage !== 'build' ? s.stages[s.stage] : undefined
+  if (action?.key !== 'design-review' || !s.stage || s.stage === 'build' || !info?.sha256) return null
+  return approveAction($, s.stage, { ...info, sha256: info.sha256 })
 }
 
 // ---------------------------------------------------------------------- typeahead
@@ -626,8 +655,9 @@ function Summary(els: Els, $: EngineInterface, s: On, steps: Steps) {
   const { Box, Text } = els
   // One or two words: a longer note pushes the band's button onto a second line, and the
   // reason for an unlock request is already in the chat.
+  const changes = s.stage === 'build' ? !s.pr && reviewState(s) === 'changes' : designState(s) === 'changes'
   const warn = s.verify.last && !s.verify.last.ok ? 'verify failed'
-    : s.stage === 'build' && !s.pr && reviewState(s) === 'changes' ? 'changes required'
+    : changes ? 'changes required'
     : s.tests_locked ? 'tests locked' : ''
   const info = s.stage && s.stage !== 'build' ? s.stages[s.stage] : undefined
   const isFile = !!info && (info.state === 'draft' || info.state === 'stale')
@@ -656,10 +686,13 @@ function ActionRow(els: Els, $: EngineInterface, s: On, busy: boolean, steps: St
   const action = unlock && s.tests_locked
     ? { key: 'unlock', label: 'Unlock tests', run: () => press($, 'sdlc unlock tests') }
     : nextAction($, s, steps)
-  // With no feature there are two ways in: a feature, or a small change on fast-track.
-  const list = [action, !s.active && !s.fasttrack ? fastTrackAction($) : null].filter((a): a is Action => !!a)
+  // With no feature there are two ways in: a feature, or a small change on fast-track. An
+  // unreviewed spec or plan has two as well: its design review, or approval as it is.
+  const list = [action, pendingApproval($, s, action), !s.active && !s.fasttrack ? fastTrackAction($) : null]
+    .filter((a): a is Action => !!a)
   if (list.length === 0) return null
-  return <Box gap={1}>{list.map((a, i) => ActionButton(els, $, a, i === 0 ? 'a' : 't', i === 0, busy))}</Box>
+  const hotkey = (a: Action, i: number) => (i === 0 ? 'a' : a.key === 'approve' ? 'p' : 't')
+  return <Box gap={1}>{list.map((a, i) => ActionButton(els, $, a, hotkey(a, i), i === 0, busy))}</Box>
 }
 
 /** A small change without intent, spec and plan: the person types what it is. */
@@ -913,14 +946,16 @@ function Details(
     { key: 'verify', label: 'Verify', labelText: 'Verify',
       value: last && !last.ok ? <Text color={ERROR}>{verify}</Text> : verify, valueText: verify },
   ]
+  const reviewLine = (key: string, label: string, info: ReviewInfo | null): Line => {
+    const text = !info ? 'Not run' : !info.current ? 'Out of date'
+      : info.verdict === 'ready' ? 'Passed' : 'Changes required'
+    const failed = !!info?.current && info.verdict === 'changes'
+    return { key, label, labelText: label, value: failed ? <Text color={ERROR}>{text}</Text> : text, valueText: text }
+  }
   if (s.stage === 'build') {
-    const reviewLine = (key: string, label: string, info: ReviewInfo | null): Line => {
-      const text = !info ? 'Not run' : !info.current ? 'Out of date'
-        : info.verdict === 'ready' ? 'Passed' : 'Changes required'
-      const failed = !!info?.current && info.verdict === 'changes'
-      return { key, label, labelText: label, value: failed ? <Text color={ERROR}>{text}</Text> : text, valueText: text }
-    }
     status.push(reviewLine('review', 'Review', s.review), reviewLine('security', 'Security', s.security))
+  } else if ((s.stage === 'spec' || s.stage === 'plan') && (s.design_review !== 'off' || s.design)) {
+    status.push(reviewLine('design', 'Design review', s.design))
   }
   if (s.pr) {
     const url = s.pr.url
@@ -944,6 +979,8 @@ function Details(
     const label = busy && action.key === 'approve' ? 'Approving…' : action.label
     actions.push({ key: action.key, label, run: action.run, hotkey: 'a' })
   }
+  const approval = pendingApproval($, s, action)
+  if (approval) actions.push({ ...approval, hotkey: 'p' })
   const verified = !!s.verify.last?.ok
   const steps = files.steps
   const building = s.active && s.stage === 'build'
@@ -981,12 +1018,15 @@ function Details(
         {s.active ? Section(els, 'artifacts', 'Artifacts', artifacts) : null}
         {Section(els, 'status', 'Status', status)}
         {actions.length > 0 ? (
-          // A column of buttons. The desktop lays a row out a whole line tall, so the buttons
-          // stand half a row apart there; the terminal's bracketed buttons need no gap.
+          // A column of buttons. The desktop lays a button out one line tall but draws it about
+          // 0.4 line taller, half above and half below, and counts a vertical gap or margin in
+          // half lines. So there the buttons stand 1.5 units apart and 1 unit below the title,
+          // or they overlap. The terminal's bracketed buttons need no gap.
           <Box key="actions" flexDirection="column" flexShrink={0}
             minWidth={Math.max(...actions.map(a => a.label.length)) + 6}>
             {SectionTitle(els, 'Actions')}
-            <Box flexDirection="column" alignItems="flex-start" rowGap={els.surface === 'desktop' ? 0.5 : 0}>
+            <Box flexDirection="column" alignItems="flex-start"
+              {...(els.surface === 'desktop' ? { rowGap: 1.5, marginTop: 1 } : {})}>
               {actions.map((a, i) => ActionButton(els, $, a, a.hotkey, i === 0, busy))}
             </Box>
           </Box>

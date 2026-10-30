@@ -213,6 +213,19 @@ class CodexHookTest(unittest.TestCase):
         self.assertEqual(self.state()["security"]["verdict"], "changes")
         self.assertIsNone(self.state()["review"])
 
+    def test_design_marker_records_the_waiting_document(self):
+        self.cli("new", "feat-a")
+        self.prompt("sdlc approve intent")
+        self.write("docs/sdlc/feat-a/spec.md", "# spec\n")
+        self.hook("subagent-stop", agent_type="default",
+                  last_assistant_message="SDLC DESIGN REVIEW: other-feature\nCHANGES REQUIRED")
+        self.assertIsNone(self.state()["design"])
+        self.hook("subagent-stop", agent_type="default",
+                  last_assistant_message="SDLC DESIGN REVIEW: feat-a\nArtifact: docs/sdlc/feat-a/spec.md\n"
+                                         "Findings: 1 Major\nCHANGES REQUIRED")
+        self.assertEqual((self.state()["design"]["verdict"], self.state()["design"]["current"]), ("changes", True))
+        self.assertIsNone(self.state()["review"])
+
     def test_pr_urls_from_canonical_shell_and_mcp_outputs(self):
         self.to_build()
         self.hook("post-tool", tool_name="Bash", tool_input={"command": "gh pr create --fill"},

@@ -669,8 +669,8 @@ class HookTest(unittest.TestCase):
         # hooks/ui.tsx reads these keys; types/index.d.ts declares them (SdlcState, StageInfo)
         self.assertEqual(set(state), {"enabled", "root", "active", "stage", "stage_state", "stage_label",
                                       "next_skill", "code_gate", "artifact", "stages", "features",
-                                      "tests_locked", "fasttrack", "verify", "review", "security", "pr",
-                                      "done"})
+                                      "tests_locked", "fasttrack", "verify", "design_review", "design",
+                                      "review", "security", "pr", "done"})
         self.assertEqual(set(state["stages"]["intent"]), {"state", "path", "sha256", "approved_sha256",
                                                           "by", "at", "reason"})
         self.assertEqual(state["artifact"], "docs/sdlc/feat-a/intent.md")
@@ -776,6 +776,51 @@ class HookTest(unittest.TestCase):
         sh(self.root, "git", "add", "-A")
         sh(self.root, "git", "commit", "-qm", "more work")
         self.assertFalse(json.loads(self.cli("state")[1])["review"]["current"])
+
+    def design(self, text, agent="ai-sdlc:sdlc-design-reviewer"):
+        self.hook("subagent-stop", agent_type=agent, last_assistant_message=text)
+        return json.loads(self.cli("state")[1])["design"]
+
+    def test_design_review_follows_the_document(self):
+        self.cli("new", "feat-a")
+        self.prompt("sdlc approve intent")
+        self.write("docs/sdlc/feat-a/spec.md", "# spec\n")
+        state = json.loads(self.cli("state")[1])
+        self.assertEqual((state["design_review"], state["design"]), ("advisory", None))
+        self.assertIn("No design review of this version", self.prompt("hi"))
+        # The code reviewers' verdicts are not design reviews, and a report without a verdict is none.
+        self.assertIsNone(self.design("READY FOR HUMAN REVIEW", agent="ai-sdlc:sdlc-reviewer"))
+        self.assertIsNone(self.design("Artifact: docs/sdlc/feat-a/spec.md\nno verdict"))
+        found = self.design("Artifact: docs/sdlc/feat-a/spec.md\nFindings: 1 Blocker\nCHANGES REQUIRED")
+        self.assertEqual((found["verdict"], found["current"]), ("changes", True))
+        # The code reviewer's verdict stays its own.
+        self.assertEqual(json.loads(self.cli("state")[1])["review"]["verdict"], "ready")
+        self.assertIn("Design review of this version: CHANGES REQUIRED", self.prompt("hi"))
+        # Any edit of the spec makes the review stale; a new one counts for the new text.
+        self.write("docs/sdlc/feat-a/spec.md", "# spec\n\nFixed.\n")
+        self.assertFalse(json.loads(self.cli("state")[1])["design"]["current"])
+        self.assertIn("No design review of this version", self.prompt("hi"))
+        self.assertEqual(self.design("Artifact: docs/sdlc/feat-a/spec.md\nREADY FOR HUMAN REVIEW")["current"], True)
+        # It advises: the spec is approved either way, and the plan stage starts with no review.
+        self.assertIn("APPROVED spec", self.prompt("sdlc approve spec"))
+        self.write("docs/sdlc/feat-a/plan.md", "# plan\n")
+        self.assertIsNone(json.loads(self.cli("state")[1])["design"])
+        # A review that names another artifact than the one waiting for approval does not count.
+        self.assertIsNone(self.design("Artifact: docs/sdlc/feat-a/spec.md\nREADY FOR HUMAN REVIEW"))
+        self.assertEqual(self.design("Findings: 0 Blocker, 0 Major, 0 Minor — nothing to fix\n"
+                                     "READY FOR HUMAN REVIEW")["verdict"], "ready")
+        # In build nothing waits for a design review.
+        self.prompt("sdlc approve plan")
+        self.assertIsNone(json.loads(self.cli("state")[1])["design"])
+        self.assertIsNone(self.design("READY FOR HUMAN REVIEW"))
+
+    def test_design_review_off(self):
+        self.write("sdlc.config.json", json.dumps({"verify": [], "design_review": "off"}))
+        self.cli("new", "feat-a")
+        self.prompt("sdlc approve intent")
+        self.write("docs/sdlc/feat-a/spec.md", "# spec\n")
+        self.assertEqual(json.loads(self.cli("state")[1])["design_review"], "off")
+        self.assertNotIn("design review", self.prompt("hi").lower())
 
     def test_state_from_the_single_file_layout_is_still_read(self):
         self.to_build()

@@ -39,8 +39,14 @@ reviews of the current code are ready.
 3. **Triage findings** from both reviews. Fix every Blocker. Fix every Major or justify it
    in the PR. Minor findings are optional. When a finding names a defect class, fix every
    instance it lists. Do not widen the change to fix a Pre-existing finding: list it in the
-   PR as a follow-up, and tell the user if it is severe. Do not argue with a finding without
-   evidence.
+   PR as a follow-up, and tell the user if it is severe.
+   You wrote the code, so your wish to dispute a finding is not evidence. Dispute a finding,
+   or justify a Major, only with something the reviewer could have read: a file and line, a
+   test, or a decision recorded in `spec.md` or `plan.md`. When the evidence is outside the
+   repository (a team convention, a decision made in a call), do not decide alone: ask the
+   user. Give their answer to the repeat review with the finding and put it in the PR; if it
+   is a standing team rule, propose adding it to `REVIEW.md`. Do not lower a finding's
+   severity: dispute the finding instead.
 4. **Repeat review.** Commit the fixes, re-run verification and note the new commit. Launch
    both reviewers once more, the same way as in step 2. Give each the commit the previous
    review read and its earlier findings with what you did about each. Each reads only

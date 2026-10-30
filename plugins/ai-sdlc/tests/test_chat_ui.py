@@ -164,6 +164,37 @@ class ChatUiTest(unittest.TestCase):
         self.assertFalse(os.path.exists(self.path("docs/sdlc/feat-a/spec.md")))
         self.assertNotIn("spec", self.approvals())
 
+    def test_design_review_button_comes_before_approval(self):
+        self.cli("new", "feat-a")
+        self.prompt("sdlc approve intent")
+        self.write("docs/sdlc/feat-a/spec.md", "# spec\n")
+        markdown, prompts = self.card()
+        ids = [prompt.split()[2] for prompt in prompts]
+        self.assertEqual(ids[:2], ["review-spec", "approve-spec"])
+        self.assertIn("Design review: not run", markdown)
+        message = self.prompt(self.action("review-spec"))
+        self.assertIn("ai-sdlc:spec skill with argument `review`", message)
+        self.assertNotIn("spec", self.approvals())
+        # Once the current text has a verdict, approval is the action; the verdict stays visible.
+        self.hook("subagent-stop", agent_type="default",
+                  last_assistant_message="SDLC DESIGN REVIEW: feat-a\nCHANGES REQUIRED")
+        markdown, _ = self.card()
+        self.assertNotIn("sdlc ui review-spec", markdown)
+        self.assertIn("Design review: changes", markdown)
+        source, _ = self.html_card(language="uk")
+        self.assertIn("<dt>Рев’ю дизайну:</dt><dd>потрібні зміни</dd>", source)
+        # Approval does not wait for the review.
+        self.assertIn("APPROVED spec", self.prompt(self.action("approve-spec")))
+
+    def test_design_review_off_offers_only_approval(self):
+        self.write("sdlc.config.json", json.dumps({"verify": [], "design_review": "off"}))
+        self.cli("new", "feat-a")
+        self.prompt("sdlc approve intent")
+        self.write("docs/sdlc/feat-a/spec.md", "# spec\n")
+        markdown, _ = self.card()
+        self.assertNotIn("sdlc ui review-spec", markdown)
+        self.assertNotIn("Design review", markdown)
+
     def test_refresh_does_not_start_or_resume_work(self):
         message = self.prompt("sdlc ui refresh")
         self.assertIn("status only", message)

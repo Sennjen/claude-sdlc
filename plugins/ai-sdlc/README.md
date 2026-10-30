@@ -17,6 +17,9 @@ from Anthropic Academy. This plugin is an independent project, not made or endor
 - **Approval gates.** Only a message you type, `sdlc approve intent|spec|plan`, records an
   approval, with the artifact's sha256, your name and the time. Editing an approved artifact
   reopens its approval. Claude cannot approve for you.
+- **A design review.** Before you approve a spec or a plan, the `sdlc-design-reviewer` agent
+  reads it with no chat history and reports unclear text, gaps against the intent, decisions
+  left to the implementer and files that do not exist. It advises; it does not block approval.
 - **A code gate.** Code edits wait for an approved intent, spec and plan whose hashes still match.
   Small changes can skip the ceremony with `sdlc trivial`.
 - **A Definition of Done.** When code changed, the `Stop` hook runs your verify commands and sends

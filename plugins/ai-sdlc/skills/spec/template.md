@@ -12,7 +12,7 @@ intent: ./intent.md
 ### Functional
 - FR1: 
 ### Non-functional
-- NFR1: <!-- performance, security, availability, accessibility, i18n -->
+- NFR1: <!-- performance, security, availability, accessibility, i18n, observability, cost -->
 
 ## Acceptance criteria
 - AC1 (FR1): Given ..., when ..., then ...
@@ -20,6 +20,11 @@ intent: ./intent.md
 ## Design
 <!-- Components and responsibilities, data model, API contracts, UX flow, migrations,
      feature flags, rollout and rollback. Only what this change needs. -->
+
+## Alternatives considered
+| Decision | Rejected option | Why not |
+|----------|-----------------|---------|
+|          |                 |         |
 
 ## Policy constraints applied
 <!-- Skills / standards applied and what they required. -->

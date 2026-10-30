@@ -22,7 +22,8 @@ export type FeatureInfo = {
 export type VerifyRun = { ok: boolean; at: string | null; report: string | null }
 
 /** A reviewer's last verdict for the active feature (sdlc-reviewer for `review`,
- *  sdlc-security-reviewer for `security`); `current` while the code it read is unchanged. */
+ *  sdlc-security-reviewer for `security`); `current` while the code it read is unchanged.
+ *  For `design`, while the document it read is unchanged. */
 export type ReviewInfo = { verdict: 'ready' | 'changes'; at: string | null; current: boolean }
 
 /** The PR (or MR) the agent opened for the active feature. */
@@ -46,6 +47,11 @@ export type SdlcState =
       tests_locked: boolean
       fasttrack: { by: string; at: string; reason: string } | null
       verify: { commands: string[]; last: VerifyRun | null }
+      /** `design_review` in sdlc.config.json: whether the bar offers the design review. */
+      design_review: 'advisory' | 'off'
+      /** sdlc-design-reviewer's last verdict on the spec or plan that waits for approval;
+       *  `current` while that file is unchanged. */
+      design: ReviewInfo | null
       review: ReviewInfo | null
       security: ReviewInfo | null
       pr: PrInfo | null

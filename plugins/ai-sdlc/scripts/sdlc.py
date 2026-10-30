@@ -22,6 +22,8 @@ CONFIG_NAME = "sdlc.config.json"
 STATE_DIR = ".sdlc"
 STAGES = ("intent", "spec", "plan")
 SKIPPABLE = ("spec",)
+# The artifacts sdlc-design-reviewer reads before the user approves them.
+DESIGN_STAGES = ("spec", "plan")
 STAGE_LABEL = {"intent": "1 Plan (intent.md)", "spec": "2 Design (spec.md)",
                "plan": "3 Build: planning (plan.md)", "build": "3-5 Build / Verify / Review"}
 STAGE_SKILL = {"intent": "ai-sdlc:intent", "spec": "ai-sdlc:spec", "plan": "ai-sdlc:plan",
@@ -63,6 +65,9 @@ DEFAULTS = {
     "protected_branches": ["main", "master", "release/*"],
     # What pre-edit and pre-bash do when the hook itself fails: "deny" (fail closed) or "allow".
     "on_hook_error": "deny",
+    # "advisory": the spec and plan skills have sdlc-design-reviewer read the document before
+    # the user approves it, and the SDLC bar offers that review. "off": neither. It gates nothing.
+    "design_review": "advisory",
 }
 
 # --------------------------------------------------------------------------- utils
@@ -268,6 +273,18 @@ class Project(object):
     def set_feature_value(self, slug, key, value):
         write_json(os.path.join(self.state, "features", slug, key + ".json"), value)
 
+    def design_on(self):
+        return self.cfg.get("design_review") != "off"
+
+    def design_review(self, slug, stage):
+        """The last design review of the stage's artifact; `current` while the file is unchanged."""
+        review = self.feature_value(slug, "design")
+        if not review or review.get("stage") != stage:
+            return None
+        path = os.path.join(self.fdir(slug), stage + ".md")
+        current = os.path.isfile(path) and review.get("sha256") == sha256_file(path)
+        return {"verdict": review.get("verdict"), "at": review.get("at"), "current": current}
+
     def audit(self, event, **kw):
         os.makedirs(self.state, exist_ok=True)
         entry = {"at": now(), "event": event}
@@ -297,6 +314,14 @@ class Project(object):
                     action = "%s.md changed after approval; ask the user to re-approve with " \
                              "`sdlc approve %s`" % (stage, stage)
                 line += " Code gate CLOSED. Next: %s (skill %s)." % (action, STAGE_SKILL[stage])
+                if stage in DESIGN_STAGES and st in ("draft", "stale") and self.design_on():
+                    review = self.design_review(slug, stage)
+                    if review and review["current"]:
+                        line += " Design review of this version: %s." % (
+                            "ready" if review["verdict"] == "ready" else "CHANGES REQUIRED")
+                    else:
+                        line += (" No design review of this version yet: run it before asking for "
+                                 "approval (step *Design review* of the skill).")
             lines.append(line)
         if sess.get("fasttrack"):
             lines.append("[SDLC] Fast-track (trivial change) is active for this session: code gate "
@@ -339,6 +364,7 @@ class Project(object):
                "artifact": None, "stages": {}, "features": [], "tests_locked": self.tests_locked(),
                "fasttrack": self.session(sid).get("fasttrack") if sid else None,
                "verify": {"commands": self.cfg["verify"], "last": self.last_verify(sid) if sid else None},
+               "design_review": "advisory" if self.design_on() else "off", "design": None,
                "review": None, "security": None, "pr": None}
         if slug:
             approvals = self.approvals(slug)
@@ -355,6 +381,8 @@ class Project(object):
                         "next_skill": STAGE_SKILL[stage], "done": "done" in approvals})
             if stage in STAGES:
                 out["artifact"] = out["stages"][stage]["path"]
+            if stage in DESIGN_STAGES:
+                out["design"] = self.design_review(slug, stage)
             changes = {}  # one fingerprint per base commit the reviews read
             for kind, _ in REVIEWERS:
                 review = self.feature_value(slug, kind)
@@ -1395,6 +1423,9 @@ def hook_post_edit(data, p):
 REVIEWERS = (("review", re.compile(r"(?:^|:)sdlc-reviewer$")),
              ("security", re.compile(r"(?:^|:)sdlc-security-reviewer$")))
 VERDICT = re.compile(r"READY FOR HUMAN REVIEW|CHANGES REQUIRED")
+# The design reviewer's verdict belongs to the spec or plan it read, not to the code.
+DESIGN_REVIEWER = re.compile(r"(?:^|:)sdlc-design-reviewer$")
+DESIGN_ARTIFACT = re.compile(r"^\s*Artifact:\s*\S*?\b(spec|plan)\.md\s*$", re.M)
 PR_CREATE = re.compile(r"\b(?:gh\s+pr|glab\s+mr)\s+create\b")
 PR_TOOL = re.compile(r"^mcp__.*(?:create|save|open)_?(?:pull|merge)_?request", re.I)
 PR_URL = re.compile(r"https?://[^\s\"'<>()\[\]\\]+/(?:pull|merge_requests)/\d+")
@@ -1404,18 +1435,33 @@ def record_review(p, data, text):
     """Keep a reviewer's verdict with the change it read, for the SDLC bar."""
     slug = p.active()
     agent = data.get("agent_type") or ""
-    kind = next((kind for kind, pattern in REVIEWERS if pattern.search(agent)), None)
-    if not slug or not kind:
-        return
     lines = [line for line in (text or "").splitlines() if VERDICT.search(line)]
-    if not lines:
+    if not slug or not lines:
         return
     # The last verdict line decides; a line that names both reads as changes required.
     verdict = "changes" if "CHANGES REQUIRED" in lines[-1] else "ready"
+    if DESIGN_REVIEWER.search(agent):
+        record_design_review(p, slug, verdict, text, data.get("session_id"))
+        return
+    kind = next((kind for kind, pattern in REVIEWERS if pattern.search(agent)), None)
+    if not kind:
+        return
     base = base_commit(p)
     p.set_feature_value(slug, kind, {"verdict": verdict, "at": now(), "base": base,
                                      "change": fingerprint(p, base)})
     p.audit("review", feature=slug, kind=kind, verdict=verdict, session=data.get("session_id"))
+
+
+def record_design_review(p, slug, verdict, text, sid):
+    """Keep a design verdict with the hash of the artifact it read. Only the artifact that waits
+    for approval counts, and only when the reviewer's `Artifact:` line, if any, names it."""
+    stage, st = p.current_stage(slug)
+    named = DESIGN_ARTIFACT.search(text)
+    if stage not in DESIGN_STAGES or st not in ("draft", "stale") or (named and named.group(1) != stage):
+        return
+    digest = sha256_file(os.path.join(p.fdir(slug), stage + ".md"))
+    p.set_feature_value(slug, "design", {"stage": stage, "sha256": digest, "verdict": verdict, "at": now()})
+    p.audit("review", feature=slug, kind="design", stage=stage, verdict=verdict, session=sid)
 
 
 def record_pr(p, data):

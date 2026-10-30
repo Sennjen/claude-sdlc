@@ -16,6 +16,9 @@ approve. It states the **problem and outcome**, not the solution design.
 2. **Brainstorm with the user.** Ask focused questions, a few at a time, until you can fill
    every section: who has the problem, how they cope today, what "better" looks like, what
    must not change. Look at the code only to name affected systems, not to design.
+   Challenge the request instead of agreeing by default: is this the cause or a symptom,
+   what happens if nothing changes, could an existing tool or a smaller change solve most
+   of it? Lead with what is weak or missing. No praise.
 3. **Write the intent.** Fill the template. Be concrete and brief (roughly half a page).
    - *Proposed outcome* is observable behaviour or a metric, not an implementation.
    - *Constraints* include security, compliance, performance, platforms, deadlines.

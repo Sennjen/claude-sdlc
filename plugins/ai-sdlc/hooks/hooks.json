@@ -45,7 +45,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "sdlc-(security-)?reviewer$",
+        "matcher": "sdlc-(security-|design-)?reviewer$",
         "hooks": [
           { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/sdlc.py", "hook", "subagent-stop"], "timeout": 30 }
         ]

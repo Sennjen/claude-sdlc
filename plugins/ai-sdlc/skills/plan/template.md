@@ -17,7 +17,9 @@ approval_level: routine  # routine | elevated
 ## Work sequence
 1. [ ] <step> — verify: <test or command>
 2. [ ] <step> — verify: <test or command>
-<!-- Mark parallelisable steps with (parallel). -->
+<!-- Each step: which file, what changes in it, and the decisions it needs already made
+     (data shape, signature, error handling, dependency). The build and tests pass after it.
+     Mark parallelisable steps with (parallel). -->
 
 ## Risks
 | Risk | Impact | Mitigation |

@@ -30,6 +30,9 @@ const DRAFT: On1 = {
   tests_locked: false,
   fasttrack: null,
   verify: { commands: ['npm test'], last: null },
+  // The spec as drafted passed its design review: the band goes straight to Approve.
+  design_review: 'advisory',
+  design: { verdict: 'ready', at: '2026-10-05T12:30:00+03:00', current: true },
   review: null,
   security: null,
   pr: null,
@@ -39,6 +42,7 @@ const BUILD: On1 = {
   stage: 'build',
   stage_state: null,
   code_gate: 'open',
+  design: null,
   stages: {
     ...DRAFT.stages,
     spec: { ...(DRAFT.stages.spec as StageInfo), state: 'approved', approved_sha256: SHA },
@@ -192,7 +196,7 @@ const PLAN = `# Plan
 const DONE_ALL = '- [x] Step 1: a\n- [x] Step 2: b\n- [X] step 3: c\n- [x] Step 9: not in the plan\n'
 const VERIFIED: On1 ={ ...BUILD, verify: { commands: ['npm test'], last: { ok: true, at: '2026-10-05T18:47:00+02:00', report: null } } }
 const IDLE: On1 = { ...DRAFT, active: null, stage: null, stage_state: null, stage_label: null, next_skill: null,
-  artifact: null, stages: {}, features: [] }
+  artifact: null, stages: {}, features: [], design: null }
 const FEAT_B = { slug: 'feat-b', stage: 'plan', stage_state: 'draft', done: false } as const
 const CLOSED = { slug: 'closed', stage: 'build', stage_state: null, done: true } as const
 
@@ -294,6 +298,52 @@ for (const surface of ['terminal', 'desktop'] as const) {
     fakeSdlc(on)
     const { actionKeys } = await details($, surface)
     expect(await actionKeys()).toEqual(['approve'])
+  })
+
+  test(`${surface}: an unreviewed spec: the band offers Review spec, with Approve beside it`, async ($, on) => {
+    const fake = fakeSdlc(on, { ...DRAFT, design: null })
+    const band = await mount($, surface, 'AbovePrompt')
+    const keys = async () => (await band.findAll({ type: 'Button' })).map(b => b.key)
+
+    expect(await keys()).toEqual(['feature', 'design-review', 'approve', 'hide'])
+    const review = await band.find({ key: 'design-review' })
+    expect(review?.props.label).toBe('Review spec')
+    expect(review?.props.hotkey).toBe(surface === 'terminal' ? 'a' : undefined)
+    expect((await band.find({ key: 'approve' }))?.props.hotkey).toBe(surface === 'terminal' ? 'p' : undefined)
+    await band.press({ key: 'design-review' })
+    expect(fake.ran).toEqual(['ai-sdlc:spec review'])
+    expect(fake.commands).toEqual([])
+
+    // The reviewer asked for changes in this version: approval leads, with a short warning.
+    fake.state = { ...fake.state, design: { verdict: 'changes', at: '2026-10-06T10:00:00+02:00', current: true } }
+    await fake.clock.advance(10_000)
+    expect(await keys()).toEqual(['feature', 'approve', 'hide'])
+    expect(await band.find({ text: /^changes required$/ })).toBeDefined()
+    expect(fake.toasts).toContain('SDLC design review of spec.md: changes required')
+
+    // An edit makes the review stale: the band offers it again.
+    fake.state = { ...fake.state, design: { verdict: 'changes', at: '2026-10-06T10:00:00+02:00', current: false } }
+    await fake.clock.advance(10_000)
+    expect(await keys()).toEqual(['feature', 'design-review', 'approve', 'hide'])
+
+    // The approval does not wait for the review.
+    await band.press({ key: 'approve' })
+    expect(fake.commands).toEqual(['sdlc approve spec'])
+  })
+
+  test(`${surface}: the details show the design review of the waiting spec`, async ($, on) => {
+    fakeSdlc(on, { ...DRAFT, design: null })
+    const { band, actionKeys } = await details($, surface)
+    expect(await actionKeys()).toEqual(['design-review', 'approve'])
+    expect(await band.find({ text: /^Design review$/ })).toBeDefined()
+    expect(await band.find({ text: /^Not run$/ })).toBeDefined()
+  })
+
+  test(`${surface}: with the design review off, a spec goes straight to Approve`, async ($, on) => {
+    fakeSdlc(on, { ...DRAFT, design_review: 'off', design: null })
+    const { band, actionKeys } = await details($, surface)
+    expect(await actionKeys()).toEqual(['approve'])
+    expect(await band.find({ text: /^Design review$/ })).toBeUndefined()
   })
 
   test(`${surface}: actions in build before verify: build, run verify, show changes`, async ($, on) => {

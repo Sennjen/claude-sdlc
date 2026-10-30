@@ -111,7 +111,7 @@ Make these protected-file changes yourself outside the agent.
 | Protected files and deploys | A shared `ask` decision becomes `deny`. The user must make that edit or run that command outside the agent. A chat approval does not override this denial. |
 | Status and approvals | An inline interactive block replaces the Claude bar on clients with visualization support. Guarded button requests and existing typed commands use the same prompt hook. |
 | Plan mode | Present a plan while writes are unavailable; save it after leaving plan mode. The user still approves `plan.md` explicitly. |
-| Independent reviews | The review skill gives the bundled code and security reviewer procedures to two fresh read-only subagents. Their reports start with `SDLC REVIEW: <slug>` and `SDLC SECURITY REVIEW: <slug>`; `SubagentStop` records each verdict only for that active feature. |
+| Independent reviews | The review skill gives the bundled code and security reviewer procedures to two fresh read-only subagents. Their reports start with `SDLC REVIEW: <slug>` and `SDLC SECURITY REVIEW: <slug>`; `SubagentStop` records each verdict only for that active feature. The spec and plan skills give the design reviewer procedure to a fresh read-only subagent whose report starts with `SDLC DESIGN REVIEW: <slug>`; its verdict counts for the spec or plan that waits for approval while that file is unchanged. |
 | Missing subagents | Report that independent review remains outstanding. Do not substitute a self-review. |
 | PR tracking | `PostToolUse` records PR URLs from `gh pr create`, `glab mr create`, and supported forge MCP tools. |
 | Failed verification | `Stop` continues the turn with the failure, up to the shared retry limit. |

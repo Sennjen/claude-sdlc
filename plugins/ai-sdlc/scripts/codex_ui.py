@@ -28,7 +28,7 @@ LABELS = {
         "not run": "не запускалася", "not configured": "не налаштовано",
         "previous change": "попередня зміна", "Code changes": "Зміни коду",
         "Tests": "Тести", "Verification": "Перевірка", "Review": "Рев’ю",
-        "Security": "Безпека", "changes": "потрібні зміни",
+        "Security": "Безпека", "Design review": "Рев’ю дизайну", "changes": "потрібні зміни",
         "Plan progress": "Прогрес плану", "steps": "кроків", "Actions": "Дії",
         "Pull request": "Pull request", "Fast-track is active.": "Fast-track увімкнено.",
         "Session context is unavailable. Refresh through trusted Codex hooks to enable actions.":
@@ -58,7 +58,7 @@ LABELS = {
         "not run": "не запускалась", "not configured": "не настроена",
         "previous change": "предыдущее изменение", "Code changes": "Изменения кода",
         "Tests": "Тесты", "Verification": "Проверка", "Review": "Ревью",
-        "Security": "Безопасность", "changes": "нужны изменения",
+        "Security": "Безопасность", "Design review": "Ревью дизайна", "changes": "нужны изменения",
         "Plan progress": "Прогресс плана", "steps": "шагов", "Actions": "Действия",
         "Pull request": "Pull request", "Fast-track is active.": "Fast-track включён.",
         "Session context is unavailable. Refresh through trusted Codex hooks to enable actions.":
@@ -79,7 +79,7 @@ def translate(text, language):
     labels = LABELS.get(language, {})
     if text in labels:
         return labels[text]
-    for prefix in ("Approve", "Write", "Switch to"):
+    for prefix in ("Approve", "Review", "Write", "Switch to"):
         if text.startswith(prefix + " "):
             return labels.get(prefix, prefix) + text[len(prefix):]
     return text
@@ -142,6 +142,12 @@ def review_text(review):
     return "not run" if not review else (review["verdict"] if review["current"] else "stale")
 
 
+def design_shown(state):
+    """Whether the card shows the design review: while a spec or plan waits for approval."""
+    return (state["stage"] in sdlc.DESIGN_STAGES and state["stages"][state["stage"]]["sha256"] is not None
+            and (state["design_review"] != "off" or state["design"] is not None))
+
+
 def actions(state, token, sid):
     """Offer only actions valid for this snapshot. No command here executes an action."""
     result = []
@@ -159,6 +165,10 @@ def actions(state, token, sid):
         add("capture-intent", "Start feature", skill="intent")
     elif stage in sdlc.STAGES:
         artifact = state["stages"][stage]
+        # The design review comes first and advises; approval stays offered beside it.
+        if (artifact["sha256"] and stage in sdlc.DESIGN_STAGES and state["design_review"] != "off"
+                and review_text(state["design"]) in ("not run", "stale")):
+            add("review-" + stage, "Review " + stage, skill=stage + " review")
         if artifact["sha256"]:
             add("approve-" + stage, "Approve " + stage,
                 command="sdlc approve %s --feature %s --sha256 %s" %
@@ -213,6 +223,8 @@ def render(p, sid=None):
     lines.append("Code gate: %s · Tests: %s · Verify: %s · Review: %s · Security: %s" %
                  (state["code_gate"], "locked" if state["tests_locked"] else "unlocked",
                   verification, review_text(state["review"]), review_text(state["security"])))
+    if design_shown(state):
+        lines.append("Design review: %s" % review_text(state["design"]))
     if state["progress"]["total"]:
         lines.append("Plan progress: {done}/{total} steps".format(**state["progress"]))
     if state["fasttrack"]:
@@ -279,6 +291,8 @@ def render_html(p, sid=None, language="en"):
                    ("Tests", label("locked" if state["tests_locked"] else "unlocked")),
                    ("Verification", verification), ("Review", label(review_text(state["review"]))),
                    ("Security", label(review_text(state["security"])))]
+        if design_shown(state):
+            details.insert(0, ("Design review", label(review_text(state["design"]))))
         content.append('<dl class="sdlc-details">%s</dl>' % "".join(
             '<div><dt>%s:</dt><dd>%s</dd></div>' % (label(key), value) for key, value in details))
         if state["fasttrack"]:

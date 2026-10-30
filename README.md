@@ -58,7 +58,7 @@ This is an independent project, not made or endorsed by Anthropic or OpenAI.
 |-------|-------|------|
 | Hooks | `hooks/hooks.json` (Claude), `hooks/codex.json` and `scripts/codex.py` (Codex), shared `scripts/sdlc.py` | Deterministic gates when hooks are enabled and trusted |
 | Skills | `plugins/ai-sdlc/skills/*` | Per-stage playbooks and templates, loaded on demand |
-| Agents | `plugins/ai-sdlc/agents/sdlc-reviewer.md`, `plugins/ai-sdlc/agents/sdlc-security-reviewer.md` | Independent read-only code and security reviewers for stage 5 |
+| Agents | `plugins/ai-sdlc/agents/sdlc-design-reviewer.md`, `plugins/ai-sdlc/agents/sdlc-reviewer.md`, `plugins/ai-sdlc/agents/sdlc-security-reviewer.md` | Independent read-only reviewers: of the spec and plan before approval, and of the code and its security for stage 5 |
 | UI | `hooks/ui.tsx` (Claude), `scripts/codex_ui.py`, `assets/codex-status.html`, and the status skill (Codex) | Claude has a band above the prompt. Supported Codex clients embed a status block with progress and guarded action buttons in chat |
 | Repository instructions | `AGENTS.md` (Codex), `CLAUDE.md` (Claude), added by init | Short always-on rules for the repository |
 | `sdlc.config.json` | repo root | Opt-in switch plus verify commands. Without it the plugin does nothing |
@@ -82,7 +82,26 @@ verification rules through `apply_patch` and Bash hooks, with the differences do
 | Plan drift | `PreToolUse` Edit/Write | In build, an edit to a code or test file that `plan.md` does not list under *Files affected* gets a note, once per file and session: add the file to the plan and re-approve, or undo the edit. It does not block |
 | Definition of Done | `Stop` | If code changed in the session, the `verify` commands run; a failure sends the agent back (max 2 retries per state) |
 | Plan mode | `PostToolUse` ExitPlanMode | A plan accepted in plan mode is not the SDLC approval: the agent is told to write it to `plan.md` and ask for `sdlc approve plan` |
+| Design review | `SubagentStop` | Records the `sdlc-design-reviewer` verdict with the sha256 of the `spec.md` or `plan.md` it read, for the SDLC bar and the status line. Gates nothing: you can approve an unreviewed or failed document |
 | Review and PR | `SubagentStop`, `PostToolUse` | Records the `sdlc-reviewer` and `sdlc-security-reviewer` verdicts with the code they read, and the URL from `gh pr create`, `glab mr create` or a forge MCP tool, for the SDLC bar. Gates nothing |
+
+## Design review
+
+Before you approve a spec or a plan, the `spec` and `plan` skills hand it to the
+`sdlc-design-reviewer` agent. It starts with no chat history, so it reads the document as a
+newcomer would. For a spec, it first writes what it understood the spec to propose and how the
+system works today; a wrong paraphrase shows unclear text. Then it checks that the spec answers
+the intent, defines its project terms, has a testable acceptance criterion for each requirement,
+reuses existing code, names the alternatives it rejected, and names its risks. For a plan, it
+checks that no design decision is left to the implementer, that the files and symbols the plan
+names exist, and that every acceptance criterion has a test. Claude fixes the Blocker and Major
+findings, runs the review once more, and reports what is still open when it asks for your
+approval.
+
+The review is advice, not a gate: `sdlc approve spec` works without it. Set
+`"design_review": "off"` in `sdlc.config.json` to skip it; the default is `"advisory"`. The idea
+comes from the Goldfish review of Google's
+[Elephant-Goldfish Model](https://github.com/google/elephant-goldfish-model).
 
 ## User commands (type them as a chat message)
 
@@ -108,6 +127,7 @@ moves it on:
 |------|--------|
 | No active feature | `Start feature` (runs `/ai-sdlc:intent`) and `Fast-track` (`sdlc trivial`) |
 | The stage's artifact is missing | `Write intent`, `Write spec`, `Write plan` (runs the stage skill) |
+| A spec or plan without a design review of its current text | `Review spec` / `Review plan` (runs `/ai-sdlc:spec review` or `/ai-sdlc:plan review`), with `Approve <stage>` beside it |
 | The artifact is a draft or changed | `Approve <stage>` / `Re-approve <stage>`, one click |
 | Build | `Start building` / `Continue building` (runs `/ai-sdlc:build`), with `n/N steps` |
 | Every plan step is done, no current reviews | `Review` (runs `/ai-sdlc:review`); `Review again` after `CHANGES REQUIRED` from either reviewer |
@@ -129,7 +149,9 @@ verify passes. A review counts while the code it read is unchanged: the `Subagen
 keeps the verdict line (`READY FOR HUMAN REVIEW` or `CHANGES REQUIRED`) of `sdlc-reviewer` and
 of `sdlc-security-reviewer`, each with a hash of the code as it differs from a fixed base
 commit: where the feature branch left the default branch, or the current commit when no
-default branch is found. A commit keeps the review, and any code change makes it stale. The PR
+default branch is found. A commit keeps the review, and any code change makes it stale. A
+design review counts while the `spec.md` or `plan.md` it read is unchanged; any edit makes it
+stale. The PR
 URL comes from the output of `gh pr create`, `glab mr create` or a forge MCP tool that creates
 a pull or merge request. Each verdict and the PR URL live in their own file under
 `.sdlc/features/<feature>/`. `×` hides the band until the stage, a review or the PR changes.
@@ -138,8 +160,9 @@ a pull or merge request. Each verdict and the PR URL live in their own file unde
 
 - **Artifacts**: `intent.md`, `spec.md`, `plan.md`, `progress.md` and `approvals.json` with
   their state. A name opens the file in the desktop's Files pane (elsewhere, in the default app).
-- **Status**: build steps, the code gate, the last verify result, the code and security
-  reviews, a link to the PR, fast-track and the test lock.
+- **Status**: build steps, the code gate, the last verify result, the design review of the
+  spec or plan that waits for approval, the code and security reviews, a link to the PR,
+  fast-track and the test lock.
 - **Actions**: the next action, `Run verify`, `Show changes` (the Diff pane), `Review`,
   `Close feature`, `Unlock tests` and `End fast-track`.
 - **Other features**: one row per open feature with its stage; a row makes that feature active
@@ -266,7 +289,7 @@ caught only by branch protection and human review.
 ```
 docs/sdlc/<feature>/
   intent.md       stage 1: problem, outcome, affected users/systems, constraints, open questions
-  spec.md         stage 2: requirements, acceptance criteria, design, flagged concerns
+  spec.md         stage 2: requirements, acceptance criteria, design, alternatives, concerns
   plan.md         stage 3: files affected, work sequence, risks, validation
   progress.md     build log (keeps plan.md, and so its approval, unchanged)
   approvals.json  who approved what and when (commit it: it is the audit trail)
@@ -314,6 +337,8 @@ docs/sdlc/<feature>/
 - The plan-drift note reads paths, directories and globs from the first column of the
   *Files affected* table (or a list in that section). A plan that names files another way gets
   no note.
+- A design verdict is tied to the `spec.md` or `plan.md` as it is when the reviewer finishes.
+  An edit made while a background reviewer still runs counts as reviewed.
 - The Stop gate runs the verify commands itself, so keep them fast.
 - On Claude Code 2.1.291 a hook's `ask` holds in `bypassPermissions` mode too:
   `claude -p --dangerously-skip-permissions` denies the gated call, so an interactive session
@@ -341,12 +366,13 @@ cd plugins/ai-sdlc && npx -p typescript tsc -p .
 
 The eval suite in `plugins/ai-sdlc/evals/` checks the agent's behaviour, not the hooks: a feature
 request starts with `intent.md`, an approved intent gets a spec that flags conflicting
-constraints, a skipped spec gets a plan before code, a bug fix locks the tests before the fix,
+constraints, a new spec gets a recorded verdict from the `sdlc-design-reviewer` subagent before
+the handover, a skipped spec gets a plan before code, a bug fix locks the tests before the fix,
 work outside the approved plan stays out of the change, a typo asks for `sdlc trivial`, a
 question starts nothing, the review runs the `sdlc-reviewer` and `sdlc-security-reviewer`
 subagents, the security reviewer flags a command injection the branch adds, and a push to
 `main` waits for the user. Each case runs three times with the plugin and three times without
-it, so `Δ` shows what the plugin adds. It makes real model calls (roughly 60 agent runs), so run it
+it, so `Δ` shows what the plugin adds. It makes real model calls (roughly 66 agent runs), so run it
 from a terminal where `claude` is logged in:
 
 ```bash
