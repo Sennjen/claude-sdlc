@@ -51,6 +51,26 @@ Requirements: Claude Code 2.1.293 or newer for the status bar (the gates work on
 versions), `python3` 3.9 or newer, and `git`. The plugin is for Claude Code: it uses hooks, a
 `bin/` command and a UI module, which claude.ai chat and Cowork don't load.
 
+## Examples
+
+Each example starts in a project where `/ai-sdlc:init` has run.
+
+- **A new feature.** Ask Claude: "Add rate limiting to the login endpoint." Claude runs
+  `/ai-sdlc:intent` and writes `docs/sdlc/<feature>/intent.md`. Edit it if you need to, then type
+  `sdlc approve intent`. Claude writes `spec.md`, has the design reviewer read it, and waits for
+  `sdlc approve spec`; then the same for `plan.md`. Claude can edit code only after
+  `sdlc approve plan`. When a turn that changed code ends, the `Stop` hook runs your verify
+  commands.
+- **A bug fix.** Ask Claude: "Fix: the CSV export drops the last row." Claude records a bug-fix
+  intent. For a small fix, type `sdlc skip spec <reason>` after you approve the intent, then
+  approve the plan. Claude writes a test that reproduces the bug, confirms that it fails, and runs
+  `sdlc lock-tests`. The test stays read-only while Claude fixes the code, so the fix cannot bend
+  the test. Type `sdlc unlock tests` when you want to edit tests again.
+- **Review and PR.** When every plan step is done, ask Claude: "Review the change and open a PR."
+  Claude runs `/ai-sdlc:review`: the `sdlc-reviewer` and `sdlc-security-reviewer` agents check the
+  diff with fresh context. Claude fixes what they report, then creates the PR with
+  `gh pr create` or `glab mr create`. A merge, a deploy or a push to `main` asks you first.
+
 ## Codex
 
 Register the repository's `.agents/plugins/marketplace.json`, install `ai-sdlc@ai-sdlc`, review
