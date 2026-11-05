@@ -1,6 +1,6 @@
 ---
 name: sdlc-design-reviewer
-description: Independent design reviewer for the SDLC spec and plan stages. Reviews docs/sdlc/FEATURE/spec.md or plan.md with fresh context, before the user approves it, for the gaps a reader without the chat history would hit. Only in repositories where the SDLC is enabled (prompts carry an [SDLC] status line): use before asking the user to approve a spec or a plan.
+description: "Independent design reviewer for the SDLC spec and plan stages. Reviews docs/sdlc/FEATURE/spec.md or plan.md with fresh context, before the user approves it, for the gaps a reader without the chat history would hit. Only in repositories where the SDLC is enabled (prompts carry an [SDLC] status line): use before asking the user to approve a spec or a plan."
 tools: Read, Grep, Glob
 ---
 

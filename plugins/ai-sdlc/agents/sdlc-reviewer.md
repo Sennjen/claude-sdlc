@@ -1,6 +1,6 @@
 ---
 name: sdlc-reviewer
-description: Independent code reviewer for the SDLC review stage. Reviews the current branch diff against the feature's spec.md, plan.md and REVIEW.md with fresh context. Only in repositories where the SDLC is enabled (prompts carry an [SDLC] status line): use proactively before opening or merging a PR.
+description: "Independent code reviewer for the SDLC review stage. Reviews the current branch diff against the feature's spec.md, plan.md and REVIEW.md with fresh context. Only in repositories where the SDLC is enabled (prompts carry an [SDLC] status line): use proactively before opening or merging a PR."
 tools: Read, Grep, Glob, Bash
 ---
 

@@ -32,7 +32,7 @@ from Anthropic Academy. This plugin is an independent project, not made or endor
   plan and your `REVIEW.md` with fresh context. The `sdlc-security-reviewer` agent checks it
   separately for vulnerabilities the change introduces.
 - **A status bar.** A band above the prompt shows the feature, its stage and the one action that
-  moves it on, such as `Approve spec`. The prompt's typeahead completes `sdlc ...` commands.
+  moves it on, such as `Approve spec`.
 
 ## Get started
 
@@ -95,8 +95,24 @@ Everything runs on your machine. The plugin makes no network requests and sends 
   or runs `open` or `xdg-open`.
 - **Reads:** the repository, `sdlc.config.json`, and the output of the tools Claude runs, to find
   the URL from `gh pr create` or `glab mr create`.
-- **Decides:** its hooks allow, deny or ask about Claude's tool calls (the gates above). It never
-  changes your Claude Code settings or permission mode.
+- **Decides:** its hooks deny Claude's tool calls or ask you about them (the gates above). They
+  never approve a call: everything else goes through Claude Code's normal permission flow. The
+  plugin never changes your Claude Code settings or permission mode.
+- **The UI module (`hooks/ui.tsx`):** it draws the band above the prompt and `SDLC` in the
+  footer. It runs only fixed programs: `python3 scripts/sdlc.py cli state` every 10 seconds and
+  after each prompt and file change, to read the status; `python3 scripts/sdlc.py hook prompt`
+  when you press a button, which records the same `sdlc ...` command you could type; and `open`
+  or `xdg-open` for a link you click. It reads `plan.md` and `progress.md` of the active feature
+  to count the plan steps. A stage button runs that stage's own skill (`/ai-sdlc:intent`,
+  `/ai-sdlc:build`, `/ai-sdlc:review` and the others) as if you typed it, or fills it into the
+  prompt. After a button press it adds a one-line note to the conversation, so that Claude knows
+  what you pressed. In the desktop app it calls the app's `mcp__ccd_view__show_pane` tool to open
+  a file or the diff. It registers one tool, `request_test_unlock`, and answers it itself: the
+  call only shows `Unlock tests` in the band and unlocks nothing. Its `prompt.submit`,
+  `tool.call` and `turn.complete` hooks only refresh the band and pass every prompt, tool call
+  and answer on unchanged. In a terminal with a notification channel it sends native
+  notifications about a failed verify, a review verdict, a new PR and an artifact that waits for
+  approval. It makes no network requests.
 - **Stores, inside your repository:** the artifacts and `approvals.json` under `docs/sdlc/`, and
   its state in `.sdlc/` (the active feature, per-session flags, the test lock, review verdicts,
   PR URLs and an `audit.log`). Approvals and the audit log record your git user name, or your OS user name

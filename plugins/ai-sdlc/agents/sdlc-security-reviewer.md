@@ -1,6 +1,6 @@
 ---
 name: sdlc-security-reviewer
-description: Independent security reviewer for the SDLC review stage. Reviews the current branch diff with fresh context for vulnerabilities the change introduces, against REVIEW.md and the feature's spec.md and plan.md. Only in repositories where the SDLC is enabled (prompts carry an [SDLC] status line): use proactively before opening or merging a PR, alongside sdlc-reviewer.
+description: "Independent security reviewer for the SDLC review stage. Reviews the current branch diff with fresh context for vulnerabilities the change introduces, against REVIEW.md and the feature's spec.md and plan.md. Only in repositories where the SDLC is enabled (prompts carry an [SDLC] status line): use proactively before opening or merging a PR, alongside sdlc-reviewer."
 tools: Read, Grep, Glob, Bash
 ---
 

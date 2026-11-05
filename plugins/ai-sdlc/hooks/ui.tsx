@@ -14,8 +14,8 @@ import type { Approval, ExtraFiles, FeatureInfo, ReviewInfo, SdlcState, Stage, S
 //   where the repository has no SDLC yet) and folds it back.
 // Actions that start a skill run its slash command at once, as if the person typed it.
 // Claude can only ask for a test unlock (the `request_test_unlock` tool); the person presses it.
-// The prompt's typeahead completes a typed `sdlc ...` command, and a terminal's native
-// notifications report what the person may be waiting on away from the screen.
+// A terminal's native notifications report what the person may be waiting on away from
+// the screen.
 
 const REFRESH_MS = 10_000
 const STAGES: readonly Stage[] = ['intent', 'spec', 'plan']
@@ -426,52 +426,6 @@ function pendingApproval($: EngineInterface, s: On, action: Action | null): Acti
   return approveAction($, s.stage, { ...info, sha256: info.sha256 })
 }
 
-// ---------------------------------------------------------------------- typeahead
-
-/** The `sdlc ...` commands only the person may send, as sdlc.py reads them. */
-const VERBS: readonly Suggestion[] = [
-  { text: 'approve', description: 'approve intent, spec or plan' },
-  { text: 'skip', description: 'skip the spec: sdlc skip spec <reason>' },
-  { text: 'trivial', description: 'fast-track a small change; off ends it' },
-  { text: 'unlock', description: 'unlock the test files' },
-  { text: 'feature', description: 'make another feature active' },
-  { text: 'done', description: 'close the active feature' },
-  { text: 'status', description: 'show the SDLC status' },
-]
-
-type Suggestion = { text: string; description?: string }
-
-/** Rows for the word being typed in a `sdlc ...` line: `sdlc`, the verb, then its one
- *  argument, taken from the state the band shows. */
-function suggest(s: SdlcState | null, words: string[], token: string): Suggestion[] {
-  if (!s || !s.enabled) return []
-  const prefix = token.toLowerCase()
-  const starting = (rows: readonly Suggestion[]) => rows.filter(r => r.text.startsWith(prefix))
-  if (words.length === 0) {
-    return prefix.length >= 2 ? starting([{ text: 'sdlc', description: 'SDLC commands only you can send' }]) : []
-  }
-  if (words[0]?.toLowerCase() !== 'sdlc' || words.length > 2) return []
-  if (words.length === 1) return starting(VERBS)
-  switch (words[1]?.toLowerCase()) {
-    case 'approve':
-      return starting(STAGES.flatMap(stage => {
-        const info = s.stages[stage]
-        if (!info || info.state === 'missing' || info.state === 'skipped') return []
-        return [{ text: stage, description: stageValueText(info) }]
-      }))
-    case 'skip':
-      return starting([{ text: 'spec', description: 'then the reason' }])
-    case 'trivial':
-      return s.fasttrack ? starting([{ text: 'off', description: 'end fast-track' }]) : []
-    case 'unlock':
-      return starting([{ text: 'tests', description: s.tests_locked ? 'Locked' : 'not locked' }])
-    case 'feature':
-      return starting(otherFeatures(s).map(f => ({ text: f.slug, description: featureText(f) })))
-    default:
-      return []
-  }
-}
-
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const started = await next(e)
@@ -519,15 +473,6 @@ export const register: Register = on => {
     const isMain = !e.agentId && e.reason === 'answer'
     void refresh($).then(s => (isMain ? announceDraft($, s) : undefined))
     return result
-  })
-
-  // The prompt's typeahead: the `sdlc ...` commands and their arguments, from the state
-  // the band already holds, beneath the engine's own rows.
-  on('prompt.autocomplete', async ($, e, next) => {
-    const result = await next(e)
-    const words = e.text.slice(0, e.start).trim().split(/\s+/).filter(Boolean)
-    const mine = suggest(await read($, stateAtom), words, e.token)
-    return mine.length > 0 ? { suggestions: [...result.suggestions, ...mine] } : result
   })
 
   // The prompt footer: the session modes as the engine draws them, then `SDLC`,

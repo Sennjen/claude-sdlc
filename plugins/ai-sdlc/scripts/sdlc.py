@@ -60,6 +60,7 @@ DEFAULTS = {
                        r"\bhelm\s+(install|upgrade)\b", r"\bvercel\b.*--prod\b",
                        r"\bfirebase\s+deploy\b", r"\beas\s+(submit|update)\b",
                        r"\bfastlane\b"],
+    # "ask" or "deny". Any other value asks: the gate never approves a command.
     "gated_command_decision": "ask",
     # A `git push` that only updates other branches (no force, delete or tags) needs no approval.
     "protected_branches": ["main", "master", "release/*"],
@@ -415,7 +416,9 @@ def emit(obj):
 
 
 def pre_decision(decision, reason):
-    emit({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
+    """Deny or ask. A hook never approves a call: Claude Code's own permission flow decides it."""
+    emit({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                                 "permissionDecision": "deny" if decision == "deny" else "ask",
                                  "permissionDecisionReason": reason}})
 
 
@@ -1379,7 +1382,7 @@ def hook_pre_bash(data, p):
         if branches and not any(matches(b, p.cfg["protected_branches"]) for b in branches):
             pattern = gated_pattern(cmd, [g for g in p.cfg["gated_commands"] if not re.search(g, "git push")])
     if pattern:
-        decision = p.cfg["gated_command_decision"]
+        decision = "deny" if p.cfg["gated_command_decision"] == "deny" else "ask"
         p.audit("gate-" + decision, tool="Bash", command=cmd[:300], reason=pattern)
         pre_decision(decision, "SDLC deploy gate: `%s` needs explicit user approval. Make sure "
                                "verification passed and the PR review (skill ai-sdlc:review) is done." % cmd[:120])

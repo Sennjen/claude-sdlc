@@ -439,6 +439,10 @@ class HookTest(unittest.TestCase):
                                                    "gated_command_decision": "deny"}))
         self.assertEqual(self.bash("git push origin feat/a"), "deny")
         self.assertEqual(self.bash("git push origin main"), "allow")
+        # The gate never approves: any other decision in the config asks.
+        self.write("sdlc.config.json", json.dumps({"verify": [], "protected_branches": ["feat/*"],
+                                                   "gated_command_decision": "allow"}))
+        self.assertEqual(self.bash("git push origin feat/a"), "ask")
 
     def test_push_on_a_protected_branch_asks(self):
         branch = subprocess.run(["git", "branch", "--show-current"], cwd=self.root,

@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { Engine, Mounted } from 'claude-code/testing'
-import type { On, PromptAutocompleteInput, PromptAutocompleteResult, RenderComponent } from 'claude-code'
+import type { On, RenderComponent } from 'claude-code'
 
 import type { SdlcState, StageInfo } from '../types'
 
@@ -83,8 +83,7 @@ function fakeSdlc(on: On, state: SdlcState = DRAFT) {
     fake.notes.push(e.text)
     return { value: { isSent: true, channel: 'kitty' } }
   })
-  // The engine beneath the plugin: no typeahead rows of its own, and a turn that ends.
-  on('prompt.autocomplete', () => ({ suggestions: [] }))
+  // The engine beneath the plugin: a turn that ends.
   on('turn.complete', ($, e) => ({ text: e.answer }))
   // A slash command run as if typed; an unknown one is refused.
   on('command.run', ($, e) => {
@@ -200,49 +199,7 @@ const IDLE: On1 = { ...DRAFT, active: null, stage: null, stage_state: null, stag
 const FEAT_B = { slug: 'feat-b', stage: 'plan', stage_state: 'draft', done: false } as const
 const CLOSED = { slug: 'closed', stage: 'build', stage_state: null, done: true } as const
 
-/** The prompt's typeahead for a draft whose last word is the token at the cursor. The
- *  2.1.295 typings of the test's `$` leave this event out of `prompt`; the kit raises it. */
-async function typeahead($: Engine, text: string) {
-  const prompt = $.prompt as unknown as {
-    autocomplete: (e: PromptAutocompleteInput) => Promise<PromptAutocompleteResult>
-  }
-  const start = text.search(/\S+$/)
-  const { suggestions } = await prompt.autocomplete({ text, cursor: text.length, token: text.slice(start), start })
-  return suggestions.map(r => (r.description ? `${r.text} (${r.description})` : r.text))
-}
-
 const TURN = { answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' } as const
-
-test('typeahead: the sdlc commands, then their arguments from the state', async ($, on) => {
-  const fake = fakeSdlc(on, { ...DRAFT, features: [...DRAFT.features, FEAT_B, CLOSED] })
-  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-
-  expect(await typeahead($, 'sd')).toEqual(['sdlc (SDLC commands only you can send)'])
-  expect(await typeahead($, 'sdlc a')).toEqual(['approve (approve intent, spec or plan)'])
-  expect(await typeahead($, 'SDLC U')).toEqual(['unlock (unlock the test files)'])
-  // Stages whose file exists, each with its state; plan.md is not written yet.
-  expect(await typeahead($, 'sdlc approve i')).toEqual(['intent (Approved)'])
-  expect(await typeahead($, 'sdlc approve s')).toEqual(['spec (Draft)'])
-  expect(await typeahead($, 'sdlc approve p')).toEqual([])
-  // Features to switch to: neither the active one nor a closed one.
-  expect(await typeahead($, 'sdlc feature f')).toEqual(['feat-b (Plan · Draft)'])
-  expect(await typeahead($, 'sdlc feature c')).toEqual([])
-  // `off` only while fast-track is on.
-  expect(await typeahead($, 'sdlc trivial o')).toEqual([])
-  fake.state = { ...fake.state, fasttrack: { by: 'Tester', at: '2026-10-06T10:00:00+02:00', reason: 'typo' } }
-  await fake.clock.advance(10_000)
-  expect(await typeahead($, 'sdlc trivial o')).toEqual(['off (end fast-track)'])
-  // Nothing for other prompts, a word past the argument, or one letter.
-  expect(await typeahead($, 'fix the sd')).toEqual([])
-  expect(await typeahead($, 'sdlc approve spec n')).toEqual([])
-  expect(await typeahead($, 's')).toEqual([])
-})
-
-test('typeahead: nothing where the SDLC is off', async ($, on) => {
-  fakeSdlc(on, { enabled: false })
-  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  expect(await typeahead($, 'sdlc a')).toEqual([])
-})
 
 test('notifications: a failed verify, the review verdict and the PR', async ($, on) => {
   const fake = fakeSdlc(on, BUILD)

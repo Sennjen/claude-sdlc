@@ -139,10 +139,6 @@ In the desktop app a new session starts Claude Code with its first message, so t
 appears after that message. Any user command works as the first message: `sdlc status` shows
 the status without a model turn, and `sdlc approve spec` approves as the button does.
 
-The prompt's typeahead completes a typed `sdlc ...` command: the command, then its argument
-from the current state (the stages whose file exists, with their state, or the features you can
-make active). It only fills in the text; the command still runs when you send it.
-
 The build counts the numbered steps under `## Work sequence` in `plan.md` and the
 `- [x] Step N: ...` lines in `progress.md`. A plan without numbered steps counts as done when
 verify passes. A review counts while the code it read is unchanged: the `SubagentStop` hook
@@ -202,8 +198,8 @@ The tests stay locked until the person unlocks them. Claude can only ask: the pl
 start, not behind ToolSearch, because the verify skill tells Claude to call it.
 
 The UI is a Claude Mod: a function-hooks module (`hooks/ui.tsx`). It needs Claude Code 2.1.293
-or newer, in the terminal and in the Code tab of the Desktop app: it hooks the prompt's
-typeahead, which older versions do not have. Native notifications need 2.1.295; on 2.1.293 and
+or newer, in the terminal and in the Code tab of the Desktop app. Native notifications need
+2.1.295; on 2.1.293 and
 2.1.294 the toasts alone show. Tested with 2.1.295. Older versions skip the module and log that
 it did not load; the gates keep working because they are command hooks. In `claude -p` the module runs but
 draws nothing, so there is no band.
