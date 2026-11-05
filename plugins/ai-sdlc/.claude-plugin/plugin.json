@@ -26,5 +26,6 @@
   "icon": "./icon.svg",
   "documentationUrl": "https://github.com/Sennjen/claude-sdlc#readme",
   "supportUrl": "https://github.com/Sennjen/claude-sdlc/issues",
+  "privacyPolicyUrl": "https://github.com/Sennjen/claude-sdlc/blob/main/plugins/ai-sdlc/PRIVACY.md",
   "types": "./types/index.d.ts"
 }
