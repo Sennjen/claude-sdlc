@@ -37,7 +37,10 @@ earlier findings, with what the author did about each.
      rejected and why, under *Alternatives considered*.
    - **Risks**: where the change touches them, the spec addresses failure modes, data
      migration, backward compatibility, security, observability and rollback. A decision
-     that needs an owner is a row in *Concerns*.
+     that needs an owner is a row in *Concerns*. A spec that adds network requests without a
+     request budget per user flow is a Major. So is a spec that removes data, fixtures or
+     config a deployed environment reads and does not say what that environment shows after
+     the merge.
 
 ## Plan (`docs/sdlc/<slug>/plan.md`)
 

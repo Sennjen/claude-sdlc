@@ -13,6 +13,8 @@ intent: ./intent.md
 - FR1: 
 ### Non-functional
 - NFR1: <!-- performance, security, availability, accessibility, i18n, observability, cost -->
+- Request budget: <!-- only if the change adds network requests: requests per user flow
+  (cold load, in-app navigation) and the shared data fetched once -->
 
 ## Acceptance criteria
 - AC1 (FR1): Given ..., when ..., then ...

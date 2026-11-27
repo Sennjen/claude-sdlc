@@ -16,7 +16,10 @@ back if it fails, so run the checks yourself first.
    list the mapping AC → test.
 3. For UI changes, verify visually: run the app and take a screenshot (browser or
    simulator tools), compare with the spec's UX description.
-4. Report failures honestly with their output, and claim only what a command you ran
+4. If the change adds network requests, count the requests per user flow and compare them
+   with the spec's request budget. Without a budget, report the missing budget as a gap: a
+   measured count alone is not a pass.
+5. Report failures honestly with their output, and claim only what a command you ran
    showed; name anything left unverified.
 
 ## Bug fix flow (test-first)

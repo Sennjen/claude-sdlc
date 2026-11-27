@@ -33,10 +33,17 @@ against that, not before. No praise.
    the change through each of these lenses, and where one applies, answer it with a
    requirement, a line of the design or a row in *Concerns*:
    - **Need**: does an existing module, library or service already do most of this?
-   - **Cost**: load, storage, quotas, paid API or token budgets at the expected scale.
+   - **Cost**: load, storage, quotas, paid API or token budgets at the expected scale. When
+     the change adds network requests, state a request budget per user flow (cold load and
+     in-app navigation). Name the data that several pages share; the design fetches it once
+     and caches it.
    - **Usability**: CLI or API conventions, error messages a user can act on.
    - **Compatibility**: stored data, schemas and clients that already exist; rollback
-     halfway through a migration.
+     halfway through a migration. List the environments and clients that deploy the base
+     branch (from the CI or deploy config, or ask the user) and what each shows after the
+     merge. Data, fixtures, sample files or config that such an environment reads stay
+     until their replacement has content there; otherwise the change waits, recorded as a
+     hold with an owner in *Concerns*.
    - **Operations**: the logs, metrics or traces someone on call needs to find a failure.
    - **Maintenance**: coupling or state that will be hard to change later.
 6. **Design review.** Skip this step if `design_review` in `sdlc.config.json` is `off`.

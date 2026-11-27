@@ -40,6 +40,10 @@ reviews of the current code are ready.
    in the PR. Minor findings are optional. When a finding names a defect class, fix every
    instance it lists. Do not widen the change to fix a Pre-existing finding: list it in the
    PR as a follow-up, and tell the user if it is severe.
+   A reviewer's note about a defect in code this change adds is a finding, even when the
+   reviewer calls it out of scope, and you fix it in code. A documented limitation is not a
+   fix: it is allowed only for a Major that the user accepts and the PR justifies, and when
+   you give the user options, recommend the fix.
    You wrote the code, so your wish to dispute a finding is not evidence. Dispute a finding,
    or justify a Major, only with something the reviewer could have read: a file and line, a
    test, or a decision recorded in `spec.md` or `plan.md`. When the evidence is outside the

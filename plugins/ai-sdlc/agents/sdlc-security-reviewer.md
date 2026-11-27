@@ -45,6 +45,10 @@ Do not report:
 - test-only files and documentation;
 - attacks that need control of environment variables, CLI flags or the server's own config.
 
+This list is for vulnerabilities. A defect you notice in code this change adds, such as a crash
+or a wrong result on some input, is still a finding of this review: report it as a Blocker or
+Major with `Why:` in place of `Exploit:`, never as out of scope.
+
 On a repeat review, review only what changed since the previous one:
 
 - Read `git diff <previous commit>` and `git status` instead of the merge-base diff.
