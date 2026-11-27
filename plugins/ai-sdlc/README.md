@@ -32,7 +32,7 @@ from Anthropic Academy. This plugin is an independent project, not made or endor
   plan and your `REVIEW.md` with fresh context. The `sdlc-security-reviewer` agent checks it
   separately for vulnerabilities the change introduces.
 - **A status bar.** A band above the prompt shows the feature, its stage and the one action that
-  moves it on, such as `Approve spec`.
+  moves it on, such as `Approve spec`. The prompt's typeahead completes `sdlc ...` commands.
 
 ## Get started
 
@@ -110,7 +110,8 @@ Everything runs on your machine. The plugin makes no network requests and sends 
   a file or the diff. It registers one tool, `request_test_unlock`, and answers it itself: the
   call only shows `Unlock tests` in the band and unlocks nothing. Its `prompt.submit`,
   `tool.call` and `turn.complete` hooks only refresh the band and pass every prompt, tool call
-  and answer on unchanged. In a terminal with a notification channel it sends native
+  and answer on unchanged. Its `prompt.autocomplete` hook adds `sdlc ...` rows to the prompt's
+  typeahead and only fills in text. In a terminal with a notification channel it sends native
   notifications about a failed verify, a review verdict, a new PR and an artifact that waits for
   approval. It makes no network requests.
 - **Stores, inside your repository:** the artifacts and `approvals.json` under `docs/sdlc/`, and
