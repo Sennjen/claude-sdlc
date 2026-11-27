@@ -2,6 +2,7 @@
 # A small Python web app with the SDLC enabled. The feature branch passes a query parameter
 # to a shell command.
 set -euo pipefail
+. "$(dirname "$0")/../lib/sandbox-git.sh"
 mkdir -p app tests
 cat > sdlc.config.json <<'EOF'
 {

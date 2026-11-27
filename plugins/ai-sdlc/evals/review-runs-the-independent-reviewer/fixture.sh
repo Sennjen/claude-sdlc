@@ -1,6 +1,7 @@
 #!/bin/bash
 # A small Python repository with the SDLC enabled.
 set -euo pipefail
+. "$(dirname "$0")/../lib/sandbox-git.sh"
 mkdir -p app tests
 cat > sdlc.config.json <<'EOF'
 {
